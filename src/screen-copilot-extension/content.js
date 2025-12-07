@@ -70,7 +70,7 @@
     if (!(el instanceof Element)) return "";
 
     const GOOD_ATTRS = [
-      "gh",           // Gmail internal tag
+      "gh", // Gmail internal tag
       "data-tooltip",
       "aria-label",
       "data-action",
@@ -197,6 +197,7 @@
     }
 
     const rect = target.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
     showLiveHighlight(
       [
         {
@@ -239,12 +240,20 @@
       console.warn("Failed to capture step screenshot:", e);
     }
 
+    console.log("hello--------", rect.left);
+
     currentGuideSteps.push({
       selector,
       instruction: instruction.trim(),
       action,
       value,
       screenshot, // base64 image for backend
+      highlight: {
+        x: rect.left * dpr,
+        y: rect.top * dpr,
+        width: rect.width * dpr,
+        height: rect.height * dpr,
+      },
     });
   }
 
@@ -380,20 +389,18 @@
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: "unknown" }));
+      console.log("hereeeeee error -----", err);
       throw new Error(err.detail || "Failed to save guide");
     }
     return await res.json();
   }
 
   async function analyzeScreenWithServer(imageBase64, question) {
-    const res = await fetch(
-      "http://127.0.0.1:8000/api/analyze/analyze_live",
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ image_base64: imageBase64, question }),
-      }
-    );
+    const res = await fetch("http://127.0.0.1:8000/api/analyze/analyze_live", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ image_base64: imageBase64, question }),
+    });
     if (!res.ok) {
       const text = await res.text();
       throw new Error(`Analyze failed: ${res.status} ${text}`);
@@ -401,12 +408,86 @@
     return await res.json();
   }
 
+  function injectNexAuraPanel() {
+    if (document.getElementById("nex-aura-shadow-root")) return;
+
+    const wrapper = document.createElement("div");
+    wrapper.id = "nex-aura-shadow-root";
+    wrapper.style.position = "fixed";
+    wrapper.style.top = "20px";
+    wrapper.style.right = "20px";
+    wrapper.style.zIndex = "999999999"; // max priority
+    wrapper.style.width = "400px";
+    wrapper.style.height = "auto";
+
+    // Create shadow root (isolated)
+    const shadow = wrapper.attachShadow({ mode: "open" });
+
+    // Load the panel HTML inside shadow root
+    fetch(chrome.runtime.getURL("panel.html"))
+      .then((r) => r.text())
+      .then((html) => {
+        shadow.innerHTML = ``; // do NOT dump HTML with <script> into shadow
+
+        // Load HTML safely
+        fetch(chrome.runtime.getURL("panel.html"))
+          .then((r) => r.text())
+          .then((html) => {
+            const container = document.createElement("div");
+            container.innerHTML = html;
+            shadow.appendChild(container);
+
+            // Load CSS correctly
+            const css = document.createElement("link");
+            css.rel = "stylesheet";
+            css.href = chrome.runtime.getURL("panel.css");
+            shadow.appendChild(css);
+
+            // Load JS correctly
+            const script = document.createElement("script");
+            script.src = chrome.runtime.getURL("panel.js");
+            shadow.appendChild(script);
+          });
+      });
+
+    document.body.appendChild(wrapper);
+  }
+
+  window.addEventListener("message", async (event) => {
+    if (!event.data?.fromPanel) return;
+    const msg = event.data.msg;
+    let response = null;
+
+    if (msg.type === "PING_CONTENT") response = { ready: true };
+    if (msg.type === "START_RECORDING") {
+      startRecording();
+      response = { ok: true };
+    }
+    if (msg.type === "STOP_RECORDING") {
+      stopRecording();
+      response = { ok: true, steps: currentGuideSteps };
+    }
+
+    // … add others like GET_GUIDES, SAVE_GUIDE …
+    if (msg.type === "GET_ACTIVE_TAB") {
+      response = await new Promise((res) =>
+        chrome.runtime.sendMessage({ type: "GET_ACTIVE_TAB" }, (r) => res(r))
+      );
+    }
+
+    window.postMessage({ fromContent: true, replyTo: msg.type, response }, "*");
+  });
+
   // ---------- message handler ----------
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.type === "SHOW_IFRAME") {
       if (iframe) iframe.style.transform = "translateX(0%)";
       sendResponse?.({ ok: true });
       return;
+    }
+
+    if (message.type === "SHOW_PANEL") {
+      injectNexAuraPanel();
     }
 
     if (message.type === "HIDE_IFRAME") {

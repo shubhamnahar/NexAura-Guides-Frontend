@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      :root { color-scheme: dark; }
+      body {
+        margin: 0;
+        font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+        background: rgba(15, 15, 20, 0.96);
+        color: #fff;
+      }
+      #box {
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      h1 { font-size: 16px; margin: 0; }
+      p { margin: 0; font-size: 13px; line-height: 1.5; }
+      button {
+        border: none;
+        border-radius: 10px;
+        padding: 10px;
+        font-size: 13px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      #primary { background: #1f6feb; color: #fff; }
+      #secondary { background: #2b2b2b; color: #fff; }
+      #imgHolder {
+        border: 1px solid rgba(255,255,255,0.1);
+        border-radius: 8px;
+        padding: 8px;
+        display: none;
+      }
+      #imgHolder img { max-width: 100%; border-radius: 6px; }
+    </style>
+  </head>
+  <body>
+    <div id="box">
+      <h1>Help us find this element</h1>
+      <p id="desc">Click the element on the page that matches the screenshot.</p>
+      <div id="imgHolder"><img id="preview" alt="Step preview"/></div>
+      <div style="display:flex;gap:8px;">
+        <button id="primary">I will click it</button>
+        <button id="secondary">Skip step</button>
+      </div>
+    </div>
+    <script src="repairOverlay.js" defer></script>
+  </body>
+</html>

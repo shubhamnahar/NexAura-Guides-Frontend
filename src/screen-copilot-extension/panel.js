@@ -16,7 +16,7 @@ async function getActiveTabId() {
         return { ok: false, error: "No active tab" };
       }
       return new Promise((resolve) => {
-        chrome.tabs.sendMessage(tabId, msg, (res) => {
+        chrome.tabs.sendMessage(tabId, msg, { frameId: 0 }, (res) => {
           if (chrome.runtime.lastError) {
             resolve({ ok: false, error: chrome.runtime.lastError.message });
           } else {
@@ -151,6 +151,77 @@ async function getActiveTabId() {
     let recording = false;
     let currentPlaybackGuide = null;
     let currentPlaybackIndex = 0;
+
+    function resetNextStepButton() {
+      nextStepBtn.disabled = true;
+      nextStepBtn.style.cursor = "not-allowed";
+      nextStepBtn.style.background = "#333";
+      nextStepBtn.style.color = "#ccc";
+      nextStepBtn.textContent = "Next step ▶";
+    }
+
+    async function handleRecordedSteps(steps) {
+      const safeSteps = Array.isArray(steps) ? steps : [];
+      if (!safeSteps.length) {
+        addMessage("bot", "No steps were recorded, so nothing to save.");
+        await sendToContent({ type: "CONSUME_PENDING_RECORDING" });
+        return;
+      }
+
+      addMessage(
+        "bot",
+        `Recorded <strong>${safeSteps.length}</strong> steps. Let's save this as a guide.`
+      );
+
+      const name = prompt("Name this guide", "My Guide");
+      if (!name) {
+        addMessage("bot", "❎ Cancelled saving guide.");
+        await sendToContent({ type: "CONSUME_PENDING_RECORDING" });
+        return;
+      }
+      const shortcut = prompt(
+        "Shortcut (e.g. /my-guide)",
+        `/${name.toLowerCase().replace(/\s+/g, "-")}`
+      );
+      const desc = prompt("Short description", "");
+
+      const safeShortcut =
+        shortcut && shortcut.trim()
+          ? shortcut.trim()
+          : "/" + name.toLowerCase().replace(/\s+/g, "-");
+
+      const safeDescription =
+        desc && desc.trim() ? desc.trim() : "Guide recorded with NexAura";
+
+      const guide = {
+        name: name.trim(),
+        shortcut: safeShortcut,
+        description: safeDescription,
+        steps: safeSteps,
+      };
+
+      const saveRes = await sendToContent({ type: "SAVE_GUIDE", guide });
+      if (saveRes?.ok) {
+        addMessage(
+          "bot",
+          `✅ Guide saved: <strong>${escapeHtml(
+            guide.name
+          )}</strong> (shortcut: <code>${escapeHtml(guide.shortcut)}</code>)`
+        );
+        await sendToContent({ type: "CONSUME_PENDING_RECORDING" });
+      } else {
+        addMessage(
+          "bot",
+          `<strong>Error saving guide:</strong> ${escapeHtml(
+            saveRes?.error || "unknown"
+          )}`
+        );
+        addMessage(
+          "bot",
+          "You can try saving again without re-recording by using the existing steps."
+        );
+      }
+    }
   
     // utility to add message bubble
     function addMessage(role, html) {
@@ -222,9 +293,12 @@ async function getActiveTabId() {
           currentPlaybackGuide = match;
           currentPlaybackIndex = 0;
       
-          addMessage("bot",
-            `▶️ Running guide: <strong>${escapeHtml(match.name)}</strong><br>
-             Click <strong>Next step ▶</strong> to continue.`);
+          addMessage(
+            "bot",
+            `▶️ Running guide: <strong>${escapeHtml(
+              match.name
+            )}</strong><br/>Use the mini playback box on the page to move through each step.`
+          );
       
           const startRes = await sendToContent({
             type: "START_PLAYBACK",
@@ -297,7 +371,7 @@ async function getActiveTabId() {
           recordBtn.textContent = "Stop Recording";
           addMessage(
             "bot",
-            "🔴 Recording started — click elements on the page to add steps. Each click will ask you for a description. Click Stop when done."
+            "🔴 Recording started — a mini box on the page lets you stop while keeping the UI clear."
           );
         } else {
           addMessage(
@@ -311,7 +385,7 @@ async function getActiveTabId() {
         const r = await sendToContent({ type: "STOP_RECORDING" });
         recording = false;
         recordBtn.textContent = "Record Guide";
-  
+
         if (!r?.ok) {
           addMessage(
             "bot",
@@ -321,57 +395,9 @@ async function getActiveTabId() {
           );
           return;
         }
-  
+
         const steps = r.steps || [];
-        addMessage(
-          "bot",
-          `Recorded <strong>${steps.length}</strong> steps. Let's save this as a guide.`
-        );
-  
-        const name = prompt("Name this guide", "My Guide");
-        if (!name) {
-          addMessage("bot", "❎ Cancelled saving guide.");
-          return;
-        }
-        const shortcut = prompt(
-          "Shortcut (e.g. /my-guide)",
-          `/${name.toLowerCase().replace(/\s+/g, "-")}`
-        );
-        const desc = prompt("Short description", "");
-  
-        const safeShortcut =
-          shortcut && shortcut.trim()
-            ? shortcut.trim()
-            : "/" + name.toLowerCase().replace(/\s+/g, "-");
-  
-        const safeDescription =
-          desc && desc.trim() ? desc.trim() : "Guide recorded with NexAura";
-  
-        const guide = {
-          name: name.trim(),
-          shortcut: safeShortcut,
-          description: safeDescription,
-          steps,
-        };
-  
-        const saveRes = await sendToContent({ type: "SAVE_GUIDE", guide });
-        if (saveRes?.ok) {
-          addMessage(
-            "bot",
-            `✅ Guide saved: <strong>${escapeHtml(
-              guide.name
-            )}</strong> (shortcut: <code>${escapeHtml(
-              guide.shortcut
-            )}</code>)`
-          );
-        } else {
-          addMessage(
-            "bot",
-            `<strong>Error saving guide:</strong> ${escapeHtml(
-              saveRes?.error || "unknown"
-            )}`
-          );
-        }
+        await handleRecordedSteps(steps);
       }
     });
   
@@ -416,7 +442,7 @@ async function getActiveTabId() {
         "bot",
         `▶️ Selected guide: <strong>${escapeHtml(
           selected.name
-        )}</strong><br/>Click <strong>Next step ▶</strong> to highlight each step. You then manually click / type on the page.`
+        )}</strong><br/>A compact playback box appears on the page so you can move through steps without the chat in the way.`
       );
   
       const startRes = await sendToContent({
@@ -443,17 +469,122 @@ async function getActiveTabId() {
       nextStepBtn.textContent = "Start step 1 ▶";
     });
   
+    chrome.runtime.onMessage.addListener((message) => {
+      if (message.type === "OVERLAY_RECORDING_RESUMED") {
+        if (!recording) {
+          recording = true;
+          recordBtn.textContent = "Stop Recording";
+          addMessage(
+            "bot",
+            "⏺ Recording resumed on this page — use the floating recorder to keep adding steps or stop when finished."
+          );
+        }
+      }
+
+      if (message.type === "OVERLAY_RECORDING_FINISHED") {
+        recording = false;
+        recordBtn.textContent = "Record Guide";
+        const steps = message.steps || [];
+        handleRecordedSteps(steps).catch((err) =>
+          console.error("Error saving overlay recording", err)
+        );
+      }
+
+      if (message.type === "OVERLAY_PLAYBACK_FINISHED") {
+        currentPlaybackGuide = null;
+        currentPlaybackIndex = 0;
+        resetNextStepButton();
+        const reason = message.reason === "stopped" ? "⏹" : "✅";
+        addMessage(
+          "bot",
+          `${reason} Guide playback ${message.reason === "stopped" ? "stopped" : "finished"}.`
+        );
+      }
+    });
+
+    async function hydratePanelState() {
+      try {
+        const state = await sendToContent({ type: "GET_PANEL_STATE" });
+        if (!state) return;
+
+        if (state.recording) {
+          recording = true;
+          recordBtn.textContent = "Stop Recording";
+          addMessage(
+            "bot",
+            "⏺ Recording is still active — continue using the floating recorder or stop when you’re done."
+          );
+        }
+
+        if (state.pendingStepsCount > 0) {
+          const pending = await sendToContent({ type: "GET_PENDING_RECORDING" });
+          if (pending?.ok && pending.steps?.length) {
+            await handleRecordedSteps(pending.steps);
+          }
+        }
+
+        if (state.playbackActive && state.playbackGuideName) {
+          try {
+            const guidesRes = await sendToContent({ type: "GET_GUIDES" });
+            if (guidesRes?.ok) {
+              const guides = guidesRes.guides || [];
+              let match = null;
+              if (state.playbackGuideShortcut) {
+                match = guides.find(
+                  (g) => g.shortcut === state.playbackGuideShortcut
+                );
+              }
+              if (!match) {
+                match = guides.find(
+                  (g) => g.name === state.playbackGuideName
+                );
+              }
+              if (match) {
+                currentPlaybackGuide = match;
+                currentPlaybackIndex = state.playbackIndex || 0;
+                nextStepBtn.disabled = false;
+                nextStepBtn.style.cursor = "pointer";
+                nextStepBtn.style.background = "#1f6feb";
+                nextStepBtn.style.color = "#fff";
+                const steps = match.steps || [];
+                if (currentPlaybackIndex >= steps.length) {
+                  nextStepBtn.textContent = "Finish ▶";
+                } else {
+                  nextStepBtn.textContent = `Resume step (${currentPlaybackIndex + 1}/${
+                    steps.length
+                  }) ▶`;
+                }
+                addMessage(
+                  "bot",
+                  `▶️ Playback is still running for <strong>${escapeHtml(
+                    match.name
+                  )}</strong>. Use the floating controller or the Next Step button here to continue.`
+                );
+              } else {
+                addMessage(
+                  "bot",
+                  "▶️ A guide playback is still active. Use the floating controller to keep going."
+                );
+              }
+            }
+          } catch (err) {
+            console.error("hydratePanelState playback resume error:", err);
+          }
+        }
+      } catch (err) {
+        console.error("hydratePanelState error:", err);
+      }
+    }
+
+    hydratePanelState();
+
     nextStepBtn.addEventListener("click", async () => {
       if (!currentPlaybackGuide) return;
       const steps = currentPlaybackGuide.steps || [];
-  
+
       if (currentPlaybackIndex >= steps.length) {
         addMessage("bot", "✅ Guide finished.");
-        nextStepBtn.disabled = true;
-        nextStepBtn.style.cursor = "not-allowed";
-        nextStepBtn.style.background = "#333";
-        nextStepBtn.style.color = "#ccc";
-        nextStepBtn.textContent = "Next step ▶";
+        resetNextStepButton();
         currentPlaybackGuide = null;
         currentPlaybackIndex = 0;
         return;
@@ -496,7 +627,7 @@ async function getActiveTabId() {
       chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
         const tabId = tabs[0]?.id;
         if (!tabId) return;
-        chrome.tabs.sendMessage(tabId, { type: "HIDE_IFRAME" });
+        chrome.tabs.sendMessage(tabId, { type: "HIDE_IFRAME" }, { frameId: 0 });
       });
     });
   

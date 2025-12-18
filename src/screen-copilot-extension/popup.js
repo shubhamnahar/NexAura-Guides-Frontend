@@ -10,7 +10,7 @@ document.getElementById("toggleChatbot").addEventListener("click", async () => {
   }
 
   // Tell content.js to show the iframe
-  chrome.tabs.sendMessage(tab.id, { type: "SHOW_IFRAME" });
+  chrome.tabs.sendMessage(tab.id, { type: "SHOW_IFRAME" }, { frameId: 0 });
 
   window.close();
 });
@@ -26,7 +26,7 @@ document.getElementById("recordGuideBtn").addEventListener("click", async () => 
   }
 
   // Just open the panel — recording happens from inside panel.js
-  chrome.tabs.sendMessage(tab.id, { type: "SHOW_IFRAME" });
+  chrome.tabs.sendMessage(tab.id, { type: "SHOW_IFRAME" }, { frameId: 0 });
 
   window.close();
 });

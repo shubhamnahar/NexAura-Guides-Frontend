@@ -8,6 +8,8 @@
   window.nexauraContentInitialized = true;
   console.log("NexAura content starting…");
 
+  const isTopFrame = window.top === window;
+
   // ===== LISTEN FOR TOKEN FROM LOGIN PAGE =====
   window.addEventListener("message", (event) => {
     const msg = event.data;
@@ -21,6 +23,8 @@
 
     window.postMessage({ type: "NEXAURA_TOKEN_RECEIVED" }, "*");
   });
+  window.addEventListener("message", handleOverlayFrameMessage);
+  window.addEventListener("message", handleRepairOverlayMessage);
 
   // ===== State =====
   let iframe = null;
@@ -29,9 +33,209 @@
   let isProgrammaticallyClicking = false; // kept for possible future auto-actions
   let playbackGuide = null;
   let currentStepIndex = 0;
+  let peekHandle = null;
+  let peekButton = null;
+  let panelVisible = false;
+  let isPeekThrough = false;
+  let overlayFrame = null;
+  let overlayFrameReady = false;
+  let overlayVisible = false;
+  let overlayState = getDefaultOverlayState();
+  let overlayPendingState = null;
+  let overlayMode = null;
+  let overlayPrimaryAction = null;
+  let overlaySecondaryAction = null;
+  let pendingRecordingSteps = null;
+  let lastHighlightedStepIndex = null;
+  let repairOverlay = null;
+  let repairActive = false;
+  let repairSelectMode = false;
+  let repairStepIndex = null;
+  const RECORDING_STATE_KEY_PREFIX = "nexaura_recording_state";
+  let recordingStateKey = null;
+  let currentTabId = null;
+  let currentFrameId = null;
+  const recordingStorage = chrome.storage.local;
+  const recordingStorageArea = "local";
+  let suppressStorageEvents = false;
+  let restoreRecordingPromise = null;
+  const moduleCache = {};
+  const readyPromise = initializeRecorderContext();
+
+  async function loadModule(path) {
+    if (!moduleCache[path]) {
+      moduleCache[path] = import(chrome.runtime.getURL(path));
+    }
+    return moduleCache[path];
+  }
+
+  function requestCurrentTabId() {
+    return new Promise((resolve) => {
+      chrome.runtime.sendMessage({ type: "GET_TAB_ID" }, (res) => {
+        if (chrome.runtime.lastError) {
+          console.warn("GET_TAB_ID failed:", chrome.runtime.lastError.message);
+          resolve(null);
+          return;
+        }
+        resolve(res?.tabId ?? null);
+      });
+    });
+  }
+
+  function requestCurrentFrameId() {
+    return new Promise((resolve) => {
+      chrome.runtime.sendMessage({ type: "GET_FRAME_ID" }, (res) => {
+        if (chrome.runtime.lastError) {
+          console.warn("GET_FRAME_ID failed:", chrome.runtime.lastError.message);
+          resolve(null);
+          return;
+        }
+        resolve(typeof res?.frameId === "number" ? res.frameId : null);
+      });
+    });
+  }
+
+  async function initializeRecorderContext() {
+    const tabId = await requestCurrentTabId();
+    if (tabId == null) {
+      currentTabId = `anon_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    } else {
+      currentTabId = tabId;
+    }
+    const frameId = await requestCurrentFrameId();
+    currentFrameId = typeof frameId === "number" ? frameId : 0;
+    recordingStateKey = `${RECORDING_STATE_KEY_PREFIX}_${currentTabId}`;
+    bootstrap();
+  }
+
+  function withRecordingStorage(fn) {
+    return new Promise((resolve) => {
+      fn(() => resolve());
+    });
+  }
+
+  function readRecordingStateFromStorage() {
+    const key = recordingStateKey;
+    return new Promise((resolve) => {
+      recordingStorage.get([key], (data) => {
+        if (chrome.runtime.lastError) {
+          console.warn("Failed to read recording state:", chrome.runtime.lastError.message);
+          resolve(null);
+          return;
+        }
+        resolve(data[key] || null);
+      });
+    });
+  }
+
+  function writeRecordingStateToStorage(state) {
+    const key = recordingStateKey;
+    return new Promise((resolve) => {
+      recordingStorage.set(
+        {
+          [key]: state,
+        },
+        () => {
+          if (chrome.runtime.lastError) {
+            console.warn("Failed to persist recording state:", chrome.runtime.lastError.message);
+          }
+          resolve();
+        }
+      );
+    });
+  }
+
+  async function syncSharedState() {
+    const payload = {
+      recording: isRecording,
+      steps: currentGuideSteps,
+      pendingSteps: pendingRecordingSteps,
+      playbackActive: !!playbackGuide,
+      playbackGuide,
+      playbackIndex: currentStepIndex,
+      lastHighlightedStepIndex,
+    };
+    suppressStorageEvents = true;
+    try {
+      await writeRecordingStateToStorage(payload);
+    } finally {
+      suppressStorageEvents = false;
+    }
+  }
+
+  async function clearRecordingStateStorage() {
+    pendingRecordingSteps = null;
+    await writeRecordingStateToStorage({
+      recording: false,
+      steps: [],
+      pendingSteps: null,
+      playbackActive: false,
+      playbackGuide: null,
+      playbackIndex: 0,
+      lastHighlightedStepIndex: null,
+    });
+  }
+
+  async function setPendingRecordedSteps(steps) {
+    if (Array.isArray(steps) && steps.length > 0) {
+      pendingRecordingSteps = steps.slice();
+    } else {
+      pendingRecordingSteps = null;
+    }
+    await syncSharedState();
+  }
+
+  function applyRecordingStateSnapshot(snapshot) {
+    if (!snapshot) return;
+    const shouldRecord = !!snapshot.recording;
+    const newSteps = Array.isArray(snapshot.steps)
+      ? snapshot.steps.slice()
+      : [];
+    const newPending =
+      Array.isArray(snapshot.pendingSteps) && snapshot.pendingSteps.length > 0
+        ? snapshot.pendingSteps.slice()
+        : null;
+    const hasPlayback =
+      !!snapshot.playbackActive && !!snapshot.playbackGuide;
+    const storedPlaybackGuide = hasPlayback ? snapshot.playbackGuide : null;
+    const storedPlaybackIndex = hasPlayback
+      ? snapshot.playbackIndex || 0
+      : 0;
+    const storedLastHighlighted =
+      typeof snapshot.lastHighlightedStepIndex === "number"
+        ? snapshot.lastHighlightedStepIndex
+        : null;
+
+    currentGuideSteps = newSteps;
+    pendingRecordingSteps = newPending;
+
+    if (shouldRecord && !isRecording) {
+      resumeRecordingFromState();
+    } else if (!shouldRecord && isRecording) {
+      detachRecordingHooks();
+    }
+
+    if (hasPlayback) {
+      playbackGuide = storedPlaybackGuide;
+      currentStepIndex = storedPlaybackIndex;
+      lastHighlightedStepIndex = storedLastHighlighted;
+      if (isTopFrame) {
+        enterPlaybackOverlay();
+        updatePlaybackOverlay();
+      }
+    } else if (playbackGuide) {
+      playbackGuide = null;
+      currentStepIndex = 0;
+      lastHighlightedStepIndex = null;
+      if (isTopFrame) {
+        exitPlaybackOverlay();
+      }
+    }
+  }
 
   // ===== Create iframe sidebar =====
   function createIframe() {
+    if (!isTopFrame) return;
     if (iframe && iframe.isConnected) return;
 
     iframe = document.createElement("iframe");
@@ -57,15 +261,48 @@
     iframe.src = chrome.runtime.getURL("panel.html");
 
     document.body.appendChild(iframe);
+    ensurePeekHandle();
+    updatePeekHandle();
   }
 
-  if (document.body) {
-    createIframe();
-  } else {
-    window.addEventListener("DOMContentLoaded", createIframe);
+  async function restoreRecordingStateIfNeeded() {
+    if (restoreRecordingPromise) return restoreRecordingPromise;
+    restoreRecordingPromise = (async () => {
+      const saved = await readRecordingStateFromStorage();
+      if (!saved) return;
+
+      applyRecordingStateSnapshot(saved);
+      if (saved.recording && isTopFrame) {
+        chrome.runtime.sendMessage(
+          {
+            type: "OVERLAY_RECORDING_RESUMED",
+            stepsCount: currentGuideSteps.length,
+          },
+          () => {}
+        );
+      }
+    })().catch((err) => console.warn("restoreRecordingState error:", err));
+    return restoreRecordingPromise;
+  }
+
+  function bootstrap() {
+    const start = () => {
+      createIframe();
+      restoreRecordingStateIfNeeded();
+    };
+    if (document.body) {
+      start();
+    } else {
+      window.addEventListener("DOMContentLoaded", start, { once: true });
+    }
   }
 
   // ---------- selector helper (robust) ----------
+  function normalizeText(str) {
+    if (!str) return "";
+    return str.replace(/\s+/g, " ").trim().toLowerCase();
+  }
+
   function getCssSelector(el) {
     if (!(el instanceof Element)) return "";
 
@@ -130,6 +367,25 @@
     return path.join(" > ");
   }
 
+  function getTextSnapshotInfo(el) {
+    let node = el;
+    for (let depth = 0; depth < 5 && node; depth++) {
+      const raw = node.innerText || node.textContent || "";
+      const normalized = normalizeText(raw);
+      if (normalized) {
+        return {
+          text: normalized.slice(0, 300),
+          tagName: node.tagName ? node.tagName.toLowerCase() : null,
+        };
+      }
+      node = node.parentElement;
+    }
+    return {
+      text: null,
+      tagName: el && el.tagName ? el.tagName.toLowerCase() : null,
+    };
+  }
+
   // ---------- highlights ----------
   function showLiveHighlight(highlights = [], duration = 5000) {
     document.querySelectorAll(".nex-hl").forEach((n) => n.remove());
@@ -187,6 +443,7 @@
   // ---------- recording ----------
   async function onRecordClick(event) {
     if (!isRecording || isProgrammaticallyClicking) return;
+    if (peekHandle && peekHandle.contains(event.target)) return;
 
     const target = event.target;
     if (!(target instanceof Element)) return;
@@ -216,6 +473,19 @@
       target.tagName === "TEXTAREA";
     const isContentEditable = target.isContentEditable;
 
+    let capturedTarget = null;
+    try {
+      const { captureTarget } = await loadModule(
+        "core/recording/captureTarget.js"
+      );
+      capturedTarget = captureTarget(target, {
+        id: currentFrameId,
+        href: window.location.href,
+      });
+    } catch (e) {
+      console.warn("captureTarget failed", e);
+    }
+
     let action = "click";
     let value = null;
     if (isInput) {
@@ -244,42 +514,226 @@
       instruction: instruction.trim(),
       action,
       value,
+      tagName: target.tagName ? target.tagName.toLowerCase() : null,
+      target: capturedTarget || null,
       screenshot, // base64 image for backend
     });
+    await syncSharedState();
   }
 
-  function startRecording() {
+  function attachRecordingHooks() {
     if (isRecording) return;
     isRecording = true;
-    currentGuideSteps = [];
     document.body.addEventListener("click", onRecordClick, true);
+    if (isTopFrame) {
+      enterRecordingOverlay();
+    }
   }
 
-  function stopRecording() {
+  function detachRecordingHooks() {
     if (!isRecording) return;
     isRecording = false;
     document.body.removeEventListener("click", onRecordClick, true);
+    if (isTopFrame) {
+      exitRecordingOverlay();
+    }
+  }
+
+  async function startRecording() {
+    if (isRecording) return;
+    pendingRecordingSteps = null;
+    currentGuideSteps = [];
+    attachRecordingHooks();
+    await syncSharedState();
+  }
+
+  async function resumeRecordingFromState() {
+    attachRecordingHooks();
+  }
+
+  async function stopRecording() {
+    if (!isRecording) return;
+    detachRecordingHooks();
+    await syncSharedState();
   }
 
   // ---------- wait for element ----------
-  async function waitForElement(selector, maxAttempts = 10, delayMs = 300) {
-    for (let i = 0; i < maxAttempts; i++) {
-      try {
-        const el = document.querySelector(selector);
-        if (el) {
-          const r = el.getBoundingClientRect();
-          const style = window.getComputedStyle(el);
-          const visible =
-            r.width > 0 &&
-            r.height > 0 &&
-            style.display !== "none" &&
-            style.visibility !== "hidden";
-          if (visible) return el;
+  function findElementsBySelector(selector) {
+    if (!selector) return [];
+    try {
+      return Array.from(document.querySelectorAll(selector)).filter(
+        (el) => el instanceof Element
+      );
+    } catch (e) {
+      console.warn("findElementBySelector: invalid selector", selector, e);
+      return [];
+    }
+  }
+
+  function findElementByTextSnapshot(tagName, textSnapshot) {
+    const normalizedTarget = normalizeText(textSnapshot);
+    if (!normalizedTarget) return null;
+    const fallbackSelectorList =
+      "a,button,input,textarea,select,label,div,span,li,p,h1,h2,h3,h4,h5,h6,section,article,td,tr";
+    const selectorOrder = [];
+    if (tagName) selectorOrder.push(tagName.toLowerCase());
+    selectorOrder.push(fallbackSelectorList);
+    selectorOrder.push("*:not(script):not(style)");
+    const seen = new Set();
+    for (const selector of selectorOrder) {
+      let fallbackMatch = null;
+      const scope = document.querySelectorAll(selector);
+      for (const candidate of scope) {
+        if (!(candidate instanceof Element)) continue;
+        if (seen.has(candidate)) continue;
+        seen.add(candidate);
+        const candidateText = normalizeText(candidate.innerText || candidate.textContent || "");
+        if (!candidateText) continue;
+        if (candidateText === normalizedTarget) {
+          return candidate;
         }
-      } catch (e) {
-        console.warn("waitForElement: invalid selector", selector, e);
-        return null;
+        if (
+          !fallbackMatch &&
+          (candidateText.includes(normalizedTarget) || normalizedTarget.includes(candidateText))
+        ) {
+          fallbackMatch = candidate;
+        }
       }
+      if (fallbackMatch) {
+        return fallbackMatch;
+      }
+    }
+    return null;
+  }
+
+  function isElementVisible(el) {
+    if (!el) return false;
+    const r = el.getBoundingClientRect();
+    const style = window.getComputedStyle(el);
+    return (
+      r.width > 0 &&
+      r.height > 0 &&
+      style.display !== "none" &&
+      style.visibility !== "hidden" &&
+      style.opacity !== "0"
+    );
+  }
+
+  function computeCandidateScore(el, targetMeta, action) {
+    if (!el) return 0;
+    let score = 0;
+    const fp = targetMeta?.fingerprint || {};
+    const tag = el.tagName ? el.tagName.toLowerCase() : null;
+    if (fp.tag && tag === fp.tag) score += 2.5;
+    if (fp.tag && tag && tag !== fp.tag) score -= 1.5; // penalize wrong tag
+
+    const role = el.getAttribute("role");
+    if (fp.role && role && role.toLowerCase() === fp.role) score += 1.2;
+    if (fp.role && role && role.toLowerCase() !== fp.role) score -= 0.5;
+
+    if (fp.ariaLabel) {
+      const aria = normalizeText(el.getAttribute("aria-label"));
+      if (aria && aria === normalizeText(fp.ariaLabel)) score += 1.2;
+    }
+    if (fp.text) {
+      const txt = normalizeText(el.textContent || el.value || "");
+      if (txt) {
+        if (txt === fp.text) {
+          score += 1.5;
+        } else if (txt.includes(fp.text) || fp.text.includes(txt)) {
+          score += 0.6;
+        }
+      }
+    }
+    if (fp.classTokens && fp.classTokens.length) {
+      const classes = new Set(Array.from(el.classList || []));
+      const hits = fp.classTokens.filter((c) => classes.has(c)).length;
+      score += hits * 0.3;
+    }
+    if (action === "click") {
+      const roleAttr = (el.getAttribute("role") || "").toLowerCase();
+      const typeAttr = (el.getAttribute("type") || "").toLowerCase();
+      const isButtonish =
+        tag === "button" ||
+        roleAttr === "button" ||
+        roleAttr === "menuitem" ||
+        tag === "a";
+      if (isButtonish) score += 1.5;
+      const isInputControl = tag === "input" || tag === "textarea" || tag === "select";
+      if (isInputControl && !isButtonish) score -= 1.5;
+      if (typeAttr === "search" || typeAttr === "text") score -= 0.8;
+    }
+    if (isElementVisible(el)) score += 0.5;
+    return score;
+  }
+
+  function shouldDiscardCandidate(el, targetMeta, action) {
+    if (!el) return true;
+    if (action !== "click") return false;
+    const tag = el.tagName ? el.tagName.toLowerCase() : null;
+    const role = (el.getAttribute("role") || "").toLowerCase();
+    const fp = targetMeta?.fingerprint || {};
+    const targetTag = fp.tag || null;
+    const targetRole = fp.role || null;
+
+    const isInputControl = tag === "input" || tag === "textarea" || tag === "select";
+    const isButtonish =
+      tag === "button" || role === "button" || role === "menuitem" || tag === "a";
+
+    // If the target was recorded as a button-ish control, skip plain inputs.
+    if ((targetTag === "button" || targetRole === "button") && isInputControl && !isButtonish) {
+      return true;
+    }
+
+    // If target fingerprint text exists, discard candidates whose text is empty when target text is non-empty.
+    if (fp.text) {
+      const candidateText = normalizeText(el.textContent || el.value || "");
+      if (!candidateText) return true;
+    }
+
+    return false;
+  }
+
+  async function findElementForStep(step, maxAttempts = 10, delayMs = 300) {
+    if (!step) return null;
+    const targetMeta = step.target || null;
+    for (let i = 0; i < maxAttempts; i++) {
+      const candidates = [];
+      const selectorMatches = findElementsBySelector(step.selector);
+      selectorMatches.forEach((el) => {
+        if (!el) return;
+        candidates.push({ el, reason: "selector" });
+      });
+
+      if (step.textSnapshot) {
+        const searchTag = step.textTagName || step.tagName;
+        const textMatches = findElementByTextSnapshot(searchTag, step.textSnapshot);
+        if (textMatches) {
+          candidates.push({ el: textMatches, reason: "text" });
+        }
+      }
+
+      const scored = candidates
+        .filter(
+          (c) =>
+            c.el &&
+            isElementVisible(c.el) &&
+            !shouldDiscardCandidate(c.el, targetMeta, step.action)
+        )
+        .map((c) => {
+          let score = computeCandidateScore(c.el, targetMeta, step.action);
+          if (document.activeElement === c.el) score += 0.5;
+          score += 0.2;
+          return { ...c, score };
+        });
+
+      if (scored.length) {
+        scored.sort((a, b) => b.score - a.score);
+        if (scored[0].score >= 0.5) {
+          return scored[0].el;
+        }
+      }
+
       if (i < maxAttempts - 1) {
         await new Promise((r) => setTimeout(r, delayMs));
       }
@@ -287,36 +741,127 @@
     return null;
   }
 
+  function delegatePlaybackStep(step) {
+    return new Promise((resolve) => {
+      chrome.runtime.sendMessage(
+        {
+          type: "DELEGATE_PLAYBACK_STEP",
+          targetFrameId:
+            typeof step?.frameId === "number" ? step.frameId : undefined,
+          targetFrameHref: step?.frameHref,
+        },
+        (response) => {
+          if (chrome.runtime.lastError) {
+            resolve({ ok: false, error: chrome.runtime.lastError.message });
+            return;
+          }
+          resolve(response || { ok: false, error: "No response from frame." });
+        }
+      );
+    });
+  }
+
   // ---------- playback ----------
   async function startPlayback(guide) {
-    playbackGuide = guide;
+    let normalized = guide;
+    try {
+      const { migrateGuide } = await loadModule("core/guideSchema.js");
+      normalized = migrateGuide(guide);
+    } catch (e) {
+      console.warn("migrateGuide failed", e);
+    }
+    playbackGuide = normalized || guide;
     currentStepIndex = 0;
-    // Panel will call EXECUTE_NEXT_PLAYBACK_STEP manually
+    lastHighlightedStepIndex = null;
+    await syncSharedState();
+    // Panel / overlay will call EXECUTE_NEXT_PLAYBACK_STEP manually
   }
 
   async function finishPlayback() {
     playbackGuide = null;
     currentStepIndex = 0;
+    lastHighlightedStepIndex = null;
     showLiveHighlight([]);
+    await syncSharedState();
   }
 
-  async function showPlaybackStep() {
-    if (!playbackGuide) return;
+  async function showPlaybackStep(options = {}) {
+    if (!playbackGuide) return { ok: false, error: "No guide active." };
 
     if (currentStepIndex >= playbackGuide.steps.length) {
       await finishPlayback();
-      return;
+      return { ok: false, error: "Guide finished." };
     }
 
     const step = playbackGuide.steps[currentStepIndex];
-    const el = await waitForElement(step.selector, 12, 300);
+    const shouldSkipDelegation = !!options.skipDelegation;
+    const resolveOpts = { timeoutMs: 6000, retries: 1 };
+    if (!shouldSkipDelegation) {
+      const frameMatches =
+        typeof step.frameId !== "number" ||
+        step.frameId === currentFrameId;
+      if (!frameMatches) {
+        return delegatePlaybackStep(step);
+      }
+    }
+
+    let resolveTargetFn = null;
+    try {
+      const mod = await loadModule("core/locatorEngine/resolveTarget.js");
+      resolveTargetFn = mod.resolveTarget;
+    } catch (e) {
+      console.warn("resolveTarget module failed", e);
+    }
+
+    let el = null;
+    if (resolveTargetFn && step.target) {
+      const res = await resolveTargetFn(step.target, resolveOpts);
+      if (res?.status === "SUCCESS" && res.element) {
+        el = res.element;
+      }
+    }
 
     if (!el) {
+      const fallback = await findElementForStep(step, 12, 300);
+      el = fallback;
+    }
+
+    if (!el) {
+      // Try vision fallback if template present
+      if (step?.target?.vision?.templateId) {
+        try {
+          const { visionFindElement } = await loadModule(
+            "core/vision/visionFallback.js"
+          );
+          const visionEl = await visionFindElement(step.target, []);
+          if (visionEl) {
+            el = visionEl;
+          }
+        } catch (e) {
+          console.warn("vision fallback failed", e);
+        }
+      }
+    }
+
+    if (!el) {
+      if (!shouldSkipDelegation) {
+        const delegated = await delegatePlaybackStep(step);
+        if (delegated?.ok) {
+          return delegated;
+        }
+      }
+      repairStepIndex = currentStepIndex;
+      if (isTopFrame) {
+        showRepairOverlay({
+          screenshot: step?.target?.vision?.templateId || step?.screenshot || null,
+        });
+        setOverlayVisible(false);
+      }
       chrome.runtime.sendMessage(
         { type: "PLAYBACK_STEP_NOT_FOUND", stepIndex: currentStepIndex, step },
         () => {}
       );
-      return;
+      return { ok: false, error: "Element not found." };
     }
 
     const r = el.getBoundingClientRect();
@@ -341,12 +886,25 @@
       () => {}
     );
 
+    lastHighlightedStepIndex = currentStepIndex;
     currentStepIndex++;
 
     chrome.runtime.sendMessage(
       { type: "PLAYBACK_CONTINUE", stepIndex: currentStepIndex },
       () => {}
     );
+
+    await syncSharedState();
+
+    return {
+      ok: true,
+      nextIndex: currentStepIndex,
+      highlightedIndex: lastHighlightedStepIndex,
+      remaining:
+        playbackGuide && playbackGuide.steps
+          ? playbackGuide.steps.length - currentStepIndex
+          : 0,
+    };
   }
 
   // ---------- server helpers ----------
@@ -356,12 +914,14 @@
     );
     const token = tokenObj?.nexaura_token;
     if (!token) throw new Error("No token. Please log in.");
+    const cache = await readScreenshotCache();
     const res = await fetch("http://127.0.0.1:8000/api/guides/", {
       method: "GET",
       headers: { Authorization: `Bearer ${token}` },
     });
     if (!res.ok) throw new Error("Failed to fetch guides");
-    return await res.json();
+    const guides = await res.json();
+    return guides.map((g) => hydrateGuideScreenshots(g, cache));
   }
 
   async function saveGuideToServer(guide) {
@@ -370,19 +930,42 @@
     );
     const token = tokenObj?.nexaura_token;
     if (!token) throw new Error("No token. Please log in.");
+    const cachePayload = {};
+    (guide.steps || []).forEach((s, idx) => {
+      if (s.screenshot) {
+        cachePayload[idx + 1] = s.screenshot;
+      }
+    });
+    // convert to backend shape
+    const payload = {
+      name: guide.name,
+      shortcut: guide.shortcut,
+      description: guide.description,
+      steps: (guide.steps || []).map((s) => ({
+        selector: s.selector || s?.target?.preferredLocators?.[0]?.value || "",
+        instruction: s.instruction || "",
+        action: s.action || null,
+        target: s.target || null,
+        screenshot: s.screenshot || null,
+      })),
+    };
     const res = await fetch("http://127.0.0.1:8000/api/guides/", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify(guide),
+      body: JSON.stringify(payload),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: "unknown" }));
       throw new Error(err.detail || "Failed to save guide");
     }
-    return await res.json();
+    const saved = await res.json();
+    if (saved?.id && Object.keys(cachePayload).length) {
+      await writeScreenshotCache(saved.id, cachePayload);
+    }
+    return saved;
   }
 
   async function analyzeScreenWithServer(imageBase64, question) {
@@ -401,16 +984,587 @@
     return await res.json();
   }
 
+  // screenshot cache for repair/vision (local only)
+  async function readScreenshotCache() {
+    return new Promise((resolve) => {
+      chrome.storage.local.get("nexaura_screenshot_cache", (data) => {
+        resolve(data?.nexaura_screenshot_cache || {});
+      });
+    });
+  }
+
+  async function writeScreenshotCache(guideId, stepMap) {
+    return new Promise((resolve) => {
+      chrome.storage.local.get("nexaura_screenshot_cache", (data) => {
+        const cache = data?.nexaura_screenshot_cache || {};
+        cache[guideId] = { ...(cache[guideId] || {}), ...stepMap };
+        chrome.storage.local.set({ nexaura_screenshot_cache: cache }, () => resolve());
+      });
+    });
+  }
+
+  function hydrateGuideScreenshots(guide, cache) {
+    if (!guide || !cache) return guide;
+    const guideCache = cache[guide.id];
+    if (!guideCache) return guide;
+    const steps = Array.isArray(guide.steps) ? guide.steps.slice() : [];
+    steps.forEach((s, idx) => {
+      const shot = guideCache[s.step_number || idx + 1];
+      if (shot) {
+        if (!s.target) s.target = {};
+        if (!s.target.vision) s.target.vision = {};
+        s.target.vision.templateId = shot;
+        s.screenshot = shot;
+      }
+    });
+    return { ...guide, steps };
+  }
+
+  function getPanelWidth() {
+    if (!isTopFrame || !iframe) return 400;
+    const parsed = parseInt(iframe.style.width, 10);
+    if (!Number.isNaN(parsed)) return parsed;
+    return iframe.getBoundingClientRect().width || 400;
+  }
+
+  function updatePeekHandle() {
+    if (!isTopFrame || !peekHandle) return;
+    const offset = panelVisible ? getPanelWidth() + 12 : 0;
+    peekHandle.style.transform = `translate3d(-${offset}px, -50%, 0)`;
+    peekHandle.style.display = panelVisible ? "flex" : "none";
+  }
+
+  function updatePeekButtonLabel() {
+    if (!isTopFrame || !peekButton) return;
+    peekButton.textContent = isPeekThrough ? "Return chat" : "Peek through";
+    peekButton.setAttribute(
+      "aria-label",
+      isPeekThrough
+        ? "Return focus to NexAura panel"
+        : "Peek through panel so you can click the page"
+    );
+    peekButton.setAttribute("aria-pressed", isPeekThrough ? "true" : "false");
+  }
+
+  function showPanel() {
+    if (!isTopFrame || !iframe) return;
+    if (!iframe) return;
+    iframe.style.transform = "translateX(0%)";
+    panelVisible = true;
+    setPeekThrough(false);
+    updatePeekHandle();
+  }
+
+  function hidePanel() {
+    if (!isTopFrame || !iframe) return;
+    if (!iframe) return;
+    iframe.style.transform = "translateX(100%)";
+    panelVisible = false;
+    setPeekThrough(false);
+    updatePeekHandle();
+  }
+
+  function setPeekThrough(enabled) {
+    if (!isTopFrame) return;
+    isPeekThrough = enabled;
+    if (iframe) {
+      iframe.style.pointerEvents = enabled ? "none" : "auto";
+      iframe.style.opacity = enabled ? "0.35" : "1";
+      iframe.style.filter = enabled ? "saturate(0.4)" : "none";
+    }
+    updatePeekButtonLabel();
+  }
+
+  function ensurePeekHandle() {
+    if (!isTopFrame) return;
+    if (peekHandle) return;
+
+    peekHandle = document.createElement("div");
+    peekHandle.id = "nexaura-peek-handle";
+    Object.assign(peekHandle.style, {
+      position: "fixed",
+      top: "50%",
+      right: "16px",
+      transform: "translate3d(0, -50%, 0)",
+      zIndex: 2147483647,
+      display: "none",
+    });
+
+    peekButton = document.createElement("button");
+    peekButton.type = "button";
+    peekButton.textContent = "Peek through";
+    Object.assign(peekButton.style, {
+      border: "none",
+      borderRadius: "999px 0 0 999px",
+      padding: "10px 18px",
+      fontSize: "13px",
+      fontWeight: "600",
+      color: "#fff",
+      background: "linear-gradient(135deg,#D93B3B 0%,#E87C32 100%)",
+      boxShadow: "0 4px 18px rgba(0,0,0,0.22)",
+      cursor: "pointer",
+      whiteSpace: "nowrap",
+    });
+    peekButton.addEventListener("click", () => {
+      setPeekThrough(!isPeekThrough);
+    });
+
+    peekHandle.appendChild(peekButton);
+    document.body.appendChild(peekHandle);
+    updatePeekButtonLabel();
+
+    window.addEventListener("resize", () => {
+      updatePeekHandle();
+    });
+  }
+
+  function getDefaultOverlayState() {
+    return {
+      title: "",
+      body: "",
+      primaryLabel: "",
+      primaryEnabled: true,
+      secondaryLabel: "",
+      secondaryEnabled: true,
+      secondaryVisible: false,
+    };
+  }
+
+  function ensureOverlayFrame() {
+    if (!isTopFrame) return null;
+    if (!document.body) {
+      window.addEventListener(
+        "DOMContentLoaded",
+        () => {
+          ensureOverlayFrame();
+        },
+        { once: true }
+      );
+      return null;
+    }
+    if (overlayFrame && overlayFrame.isConnected) return overlayFrame;
+
+    overlayFrame = document.createElement("iframe");
+    overlayFrame.id = "nexaura-overlay-frame";
+    Object.assign(overlayFrame.style, {
+      position: "fixed",
+      bottom: "20px",
+      right: "20px",
+      width: "260px",
+      height: "150px",
+      border: "none",
+      borderRadius: "16px",
+      overflow: "hidden",
+      background: "transparent",
+      boxShadow: "0 18px 45px rgba(0,0,0,0.4)",
+      zIndex: 2147483646,
+      display: overlayVisible ? "block" : "none",
+      pointerEvents: "auto",
+    });
+    overlayFrame.src = chrome.runtime.getURL("overlay.html");
+    overlayFrame.sandbox = "allow-scripts allow-same-origin";
+    overlayFrameReady = false;
+    document.body.appendChild(overlayFrame);
+    deliverOverlayState();
+    return overlayFrame;
+  }
+
+  function handleOverlayFrameMessage(event) {
+    if (!overlayFrame || event.source !== overlayFrame.contentWindow) return;
+    const data = event.data || {};
+    const { type, payload } = data;
+
+    if (type === "NEXAURA_OVERLAY_READY") {
+      overlayFrameReady = true;
+      if (overlayPendingState) {
+        overlayFrame.contentWindow.postMessage(
+          { type: "NEXAURA_SET_STATE", payload: overlayPendingState },
+          "*"
+        );
+      } else {
+        deliverOverlayState();
+      }
+      return;
+    }
+
+    if (type === "NEXAURA_OVERLAY_PRIMARY") {
+      if (typeof overlayPrimaryAction === "function") {
+        overlayPrimaryAction();
+      }
+      return;
+    }
+
+    if (type === "NEXAURA_OVERLAY_SECONDARY") {
+      if (typeof overlaySecondaryAction === "function") {
+        overlaySecondaryAction();
+      }
+      return;
+    }
+
+    if (type === "NEXAURA_OVERLAY_HEIGHT") {
+      const rawHeight = payload?.height || 0;
+      const clamped = Math.min(Math.max(rawHeight, 120), 280);
+      overlayFrame.style.height = `${clamped}px`;
+    }
+  }
+
+  function deliverOverlayState() {
+    if (!overlayFrame) return;
+    overlayPendingState = { ...overlayState };
+    if (overlayFrameReady && overlayFrame.contentWindow) {
+      overlayFrame.contentWindow.postMessage(
+        { type: "NEXAURA_SET_STATE", payload: overlayPendingState },
+        "*"
+      );
+    }
+  }
+
+  function ensureRepairOverlay() {
+    if (!isTopFrame) return null;
+    if (repairOverlay && repairOverlay.isConnected) return repairOverlay;
+    repairOverlay = document.createElement("iframe");
+    Object.assign(repairOverlay.style, {
+      position: "fixed",
+      bottom: "20px",
+      left: "20px",
+      width: "300px",
+      height: "260px",
+      border: "none",
+      borderRadius: "14px",
+      overflow: "hidden",
+      boxShadow: "0 18px 45px rgba(0,0,0,0.4)",
+      zIndex: 2147483646,
+      display: "none",
+    });
+    repairOverlay.src = chrome.runtime.getURL("repairOverlay.html");
+    document.body.appendChild(repairOverlay);
+    return repairOverlay;
+  }
+
+  function showRepairOverlay(payload) {
+    const frame = ensureRepairOverlay();
+    if (!frame) return;
+    repairActive = true;
+    frame.style.display = "block";
+    frame.contentWindow?.postMessage({ type: "REPAIR_SHOW", payload }, "*");
+  }
+
+  function hideRepairOverlay() {
+    if (!repairOverlay) return;
+    repairActive = false;
+    repairSelectMode = false;
+    repairStepIndex = null;
+    repairOverlay.style.display = "none";
+  }
+
+  function handleRepairOverlayMessage(event) {
+    if (!repairOverlay || event.source !== repairOverlay.contentWindow) return;
+    const data = event.data || {};
+    if (data.type === "REPAIR_OVERLAY_READY") {
+      return;
+    }
+    if (data.type === "REPAIR_CLICK_MODE") {
+      repairSelectMode = true;
+      document.addEventListener("click", captureRepairClick, true);
+      hidePanel();
+      return;
+    }
+    if (data.type === "REPAIR_SKIP") {
+      hideRepairOverlay();
+      handleOverlayStopPlayback();
+      return;
+    }
+  }
+
+  async function captureRepairClick(evt) {
+    if (!repairSelectMode) return;
+    evt.preventDefault();
+    evt.stopPropagation();
+    evt.stopImmediatePropagation();
+    repairSelectMode = false;
+    document.removeEventListener("click", captureRepairClick, true);
+    const el = evt.target;
+    if (!(el instanceof Element)) {
+      hideRepairOverlay();
+      return;
+    }
+    let newTarget = null;
+    try {
+      const { captureTarget } = await loadModule("core/recording/captureTarget.js");
+      newTarget = captureTarget(el, { id: currentFrameId, href: window.location.href });
+    } catch (e) {
+      console.warn("repair capture failed", e);
+    }
+    if (
+      playbackGuide &&
+      typeof repairStepIndex === "number" &&
+      playbackGuide.steps[repairStepIndex]
+    ) {
+      playbackGuide.steps[repairStepIndex].target = newTarget;
+      if (!playbackGuide.steps[repairStepIndex].preferredLocators && newTarget?.preferredLocators) {
+        playbackGuide.steps[repairStepIndex].preferredLocators = newTarget.preferredLocators;
+      }
+      // retry current step
+      currentStepIndex = repairStepIndex;
+    }
+    hideRepairOverlay();
+    setOverlayVisible(true);
+    await handleOverlayNextStep();
+  }
+
+  function setOverlayState(partial) {
+    if (!isTopFrame) return;
+    ensureOverlayFrame();
+    overlayState = { ...overlayState, ...partial };
+    deliverOverlayState();
+  }
+
+  function resetOverlayState() {
+    overlayState = getDefaultOverlayState();
+    deliverOverlayState();
+  }
+
+  function setOverlayVisible(visible) {
+    if (!isTopFrame) return;
+    overlayVisible = visible;
+    const frame = ensureOverlayFrame();
+    if (frame) {
+      frame.style.display = visible ? "block" : "none";
+    }
+    if (!visible) {
+      overlayMode = null;
+      overlayPrimaryAction = null;
+      overlaySecondaryAction = null;
+      resetOverlayState();
+    }
+  }
+
+  function enterRecordingOverlay() {
+    if (!isTopFrame) return;
+    ensureOverlayFrame();
+    overlayMode = "recording";
+    overlayPrimaryAction = handleOverlayStopRecording;
+    overlaySecondaryAction = null;
+    setOverlayState({
+      title: "Recording guide",
+      body: "Click anywhere on the page to capture a step. Use Stop when you are done.",
+      primaryLabel: "Stop recording",
+      primaryEnabled: true,
+      secondaryLabel: "",
+      secondaryEnabled: true,
+      secondaryVisible: false,
+    });
+    setOverlayVisible(true);
+    hidePanel();
+  }
+
+  function exitRecordingOverlay() {
+    if (!isTopFrame) return;
+    if (overlayMode === "recording") {
+      setOverlayVisible(false);
+    }
+  }
+
+  function enterPlaybackOverlay() {
+    if (!isTopFrame) return;
+    ensureOverlayFrame();
+    overlayMode = "playback";
+    overlayPrimaryAction = handleOverlayNextStep;
+    overlaySecondaryAction = handleOverlayStopPlayback;
+    setOverlayVisible(true);
+    updatePlaybackOverlay();
+    hidePanel();
+  }
+
+  function exitPlaybackOverlay() {
+    if (!isTopFrame) return;
+    if (overlayMode === "playback") {
+      setOverlayVisible(false);
+    }
+  }
+
+  function updatePlaybackOverlay() {
+    if (overlayMode !== "playback") return;
+    ensureOverlayFrame();
+
+    if (!playbackGuide) {
+      overlayPrimaryAction = handleOverlayNextStep;
+      overlaySecondaryAction = handleOverlayStopPlayback;
+      setOverlayState({
+        title: "Guide playback",
+        body: "No guide loaded.",
+        primaryLabel: "Next step",
+        primaryEnabled: false,
+        secondaryVisible: false,
+      });
+      return;
+    }
+
+    const steps = playbackGuide.steps || [];
+    if (!steps.length) {
+      overlaySecondaryAction = () => {
+        exitPlaybackOverlay();
+        showPanel();
+      };
+      setOverlayState({
+        title: "Guide playback",
+        body: "This guide has no steps.",
+        primaryLabel: "Done",
+        primaryEnabled: false,
+        secondaryLabel: "Close",
+        secondaryEnabled: true,
+        secondaryVisible: true,
+      });
+      return;
+    }
+
+    const hasActiveStep =
+      typeof lastHighlightedStepIndex === "number" &&
+      lastHighlightedStepIndex < steps.length;
+    if (!hasActiveStep && currentStepIndex >= steps.length) {
+      overlayPrimaryAction = () => {
+        finalizePlayback("finished");
+      };
+      overlaySecondaryAction = null;
+      setOverlayState({
+        title: "Guide playback",
+        body: "Guide finished.",
+        primaryLabel: "Back to Copilot",
+        primaryEnabled: true,
+        secondaryVisible: false,
+      });
+      return;
+    }
+
+    const displayIndex = hasActiveStep
+      ? Math.min(lastHighlightedStepIndex, steps.length - 1)
+      : Math.min(currentStepIndex, steps.length - 1);
+    const step = steps[displayIndex];
+    overlayPrimaryAction = handleOverlayNextStep;
+    overlaySecondaryAction = handleOverlayStopPlayback;
+    const isLastHighlighted = hasActiveStep && displayIndex === steps.length - 1;
+    setOverlayState({
+      title: "Guide playback",
+      body: `Step ${displayIndex + 1} of ${steps.length}\n${
+        step.instruction || "Follow the highlighted element."
+      }`,
+      primaryLabel: hasActiveStep
+        ? isLastHighlighted && currentStepIndex >= steps.length
+          ? "Finish"
+          : "Next step"
+        : displayIndex === 0
+        ? "Start"
+        : "Next step",
+      primaryEnabled: true,
+      secondaryLabel: "Stop",
+      secondaryEnabled: true,
+      secondaryVisible: true,
+    });
+  }
+
+  async function handleOverlayStopRecording() {
+    if (!isRecording) {
+      exitRecordingOverlay();
+      showPanel();
+      return;
+    }
+    setOverlayState({ primaryEnabled: false });
+    await stopRecording();
+    const steps = currentGuideSteps.slice();
+    currentGuideSteps = [];
+    await setPendingRecordedSteps(steps);
+    exitRecordingOverlay();
+    showPanel();
+    chrome.runtime.sendMessage(
+      { type: "OVERLAY_RECORDING_FINISHED", steps },
+      () => {}
+    );
+  }
+
+  async function handleOverlayNextStep() {
+    if (!playbackGuide) return;
+    setOverlayState({ primaryEnabled: false });
+    const steps = playbackGuide.steps || [];
+    if (currentStepIndex >= steps.length) {
+      // Already at end; just update UI to show Finish state.
+      setOverlayState({ primaryEnabled: true });
+      updatePlaybackOverlay();
+      return;
+    }
+
+    const result = await showPlaybackStep();
+    setOverlayState({ primaryEnabled: true });
+    if (typeof result?.nextIndex === "number") {
+      currentStepIndex = result.nextIndex;
+    }
+    if (typeof result?.highlightedIndex === "number") {
+      lastHighlightedStepIndex = result.highlightedIndex;
+    }
+
+    if (!result?.ok) {
+      if (result?.error === "Guide finished.") {
+        return;
+      }
+      setOverlayState({
+        body:
+          result?.error ||
+          "Couldn't locate that element. Make sure the page hasn't changed.",
+        primaryLabel: "Try again",
+        primaryEnabled: true,
+      });
+      return;
+    }
+
+    updatePlaybackOverlay();
+  }
+
+  async function handleOverlayStopPlayback() {
+    setOverlayState({ primaryEnabled: false, secondaryEnabled: false });
+    await finalizePlayback("stopped");
+  }
+
+  async function finalizePlayback(reason) {
+    await finishPlayback();
+    exitPlaybackOverlay();
+    showPanel();
+    chrome.runtime.sendMessage(
+      { type: "OVERLAY_PLAYBACK_FINISHED", reason },
+      () => {}
+    );
+  }
+
+  chrome.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName !== recordingStorageArea) return;
+    const key = recordingStateKey;
+    if (!key) return;
+    const change = changes[key];
+    if (!change) return;
+    if (suppressStorageEvents) return;
+    if (change.newValue) {
+      applyRecordingStateSnapshot(change.newValue);
+    }
+  });
+
   // ---------- message handler ----------
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    readyPromise
+      .then(() => processRuntimeMessage(message, sendResponse))
+      .catch((err) => {
+        console.error("Recorder init failed:", err);
+        sendResponse?.({ ok: false, error: "Recorder not ready" });
+      });
+    return true;
+  });
+
+  function processRuntimeMessage(message, sendResponse) {
     if (message.type === "SHOW_IFRAME") {
-      if (iframe) iframe.style.transform = "translateX(0%)";
+      showPanel();
       sendResponse?.({ ok: true });
       return;
     }
 
     if (message.type === "HIDE_IFRAME") {
-      if (iframe) iframe.style.transform = "translateX(100%)";
+      hidePanel();
       sendResponse?.({ ok: true });
       return;
     }
@@ -421,27 +1575,100 @@
     }
 
     if (message.type === "START_RECORDING") {
-      startRecording();
-      sendResponse?.({ ok: true });
-      return;
+      (async () => {
+        await startRecording();
+        sendResponse?.({ ok: true });
+      })();
+      return true;
     }
 
     if (message.type === "STOP_RECORDING") {
-      stopRecording();
-      sendResponse?.({ ok: true, steps: currentGuideSteps });
-      return;
+      (async () => {
+        await stopRecording();
+        showPanel();
+        const steps = currentGuideSteps.slice();
+        currentGuideSteps = [];
+        await setPendingRecordedSteps(steps);
+        sendResponse?.({ ok: true, steps });
+      })();
+      return true;
     }
 
     if (message.type === "START_PLAYBACK") {
-      startPlayback(message.guide);
+      (async () => {
+        await startPlayback(message.guide);
+        enterPlaybackOverlay();
+        sendResponse?.({ ok: true });
+      })();
+      return true;
+    }
+
+    if (message.type === "EXECUTE_NEXT_PLAYBACK_STEP") {
+      (async () => {
+        const result = await showPlaybackStep();
+        if (overlayMode === "playback") {
+          updatePlaybackOverlay();
+        }
+        sendResponse?.(result);
+      })();
+      return true;
+    }
+
+    if (message.type === "EXECUTE_DELEGATED_PLAYBACK_STEP") {
+      (async () => {
+        const result = await showPlaybackStep({ skipDelegation: true });
+        sendResponse?.(result);
+      })();
+      return true;
+    }
+
+    if (message.type === "STOP_PLAYBACK") {
+      finishPlayback().then(() => {
+        exitPlaybackOverlay();
+        showPanel();
+        sendResponse?.({ ok: true });
+      });
+      return true;
+    }
+
+    if (message.type === "PANEL_SHOW_CHAT") {
+      showPanel();
+      exitRecordingOverlay();
+      exitPlaybackOverlay();
       sendResponse?.({ ok: true });
       return;
     }
 
-    if (message.type === "EXECUTE_NEXT_PLAYBACK_STEP") {
-      showPlaybackStep();
-      sendResponse?.({ ok: true });
+    if (message.type === "GET_PANEL_STATE") {
+      sendResponse?.({
+        recording: isRecording,
+        stepsCount: currentGuideSteps.length,
+        pendingStepsCount: pendingRecordingSteps ? pendingRecordingSteps.length : 0,
+        overlayMode,
+        playbackActive: !!playbackGuide,
+        playbackIndex: currentStepIndex,
+        playbackTotal: playbackGuide?.steps ? playbackGuide.steps.length : 0,
+        playbackGuideName: playbackGuide ? playbackGuide.name : null,
+        playbackGuideShortcut: playbackGuide ? playbackGuide.shortcut || null : null,
+      });
       return;
+    }
+
+    if (message.type === "GET_PENDING_RECORDING") {
+      sendResponse?.({
+        ok: true,
+        steps: pendingRecordingSteps ? pendingRecordingSteps.slice() : [],
+      });
+      return;
+    }
+
+    if (message.type === "CONSUME_PENDING_RECORDING") {
+      (async () => {
+        pendingRecordingSteps = null;
+        await syncSharedState();
+        sendResponse?.({ ok: true });
+      })();
+      return true;
     }
 
     if (message.type === "PANEL_ANALYZE") {
@@ -500,7 +1727,7 @@
       })();
       return true;
     }
-  });
+  }
 
   console.log("✅ NexAura content initialized");
 })();

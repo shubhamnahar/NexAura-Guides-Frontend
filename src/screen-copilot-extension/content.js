@@ -1,6 +1,13 @@
 // content.js — page logic + iframe sidebar host
 
 (function () {
+  if (
+    window.location.protocol === "file:" ||
+    document.contentType === "application/pdf"
+  ) {
+    console.debug("NexAura: blocked on PDF/file");
+    return;
+  }
   if (window.nexauraContentInitialized) {
     console.log("NexAura content already initialized");
     return;
@@ -86,7 +93,10 @@
     return new Promise((resolve) => {
       chrome.runtime.sendMessage({ type: "GET_FRAME_ID" }, (res) => {
         if (chrome.runtime.lastError) {
-          console.warn("GET_FRAME_ID failed:", chrome.runtime.lastError.message);
+          console.warn(
+            "GET_FRAME_ID failed:",
+            chrome.runtime.lastError.message
+          );
           resolve(null);
           return;
         }
@@ -98,7 +108,9 @@
   async function initializeRecorderContext() {
     const tabId = await requestCurrentTabId();
     if (tabId == null) {
-      currentTabId = `anon_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+      currentTabId = `anon_${Date.now()}_${Math.random()
+        .toString(36)
+        .slice(2)}`;
     } else {
       currentTabId = tabId;
     }
@@ -119,7 +131,10 @@
     return new Promise((resolve) => {
       recordingStorage.get([key], (data) => {
         if (chrome.runtime.lastError) {
-          console.warn("Failed to read recording state:", chrome.runtime.lastError.message);
+          console.warn(
+            "Failed to read recording state:",
+            chrome.runtime.lastError.message
+          );
           resolve(null);
           return;
         }
@@ -137,7 +152,10 @@
         },
         () => {
           if (chrome.runtime.lastError) {
-            console.warn("Failed to persist recording state:", chrome.runtime.lastError.message);
+            console.warn(
+              "Failed to persist recording state:",
+              chrome.runtime.lastError.message
+            );
           }
           resolve();
         }
@@ -195,12 +213,9 @@
       Array.isArray(snapshot.pendingSteps) && snapshot.pendingSteps.length > 0
         ? snapshot.pendingSteps.slice()
         : null;
-    const hasPlayback =
-      !!snapshot.playbackActive && !!snapshot.playbackGuide;
+    const hasPlayback = !!snapshot.playbackActive && !!snapshot.playbackGuide;
     const storedPlaybackGuide = hasPlayback ? snapshot.playbackGuide : null;
-    const storedPlaybackIndex = hasPlayback
-      ? snapshot.playbackIndex || 0
-      : 0;
+    const storedPlaybackIndex = hasPlayback ? snapshot.playbackIndex || 0 : 0;
     const storedLastHighlighted =
       typeof snapshot.lastHighlightedStepIndex === "number"
         ? snapshot.lastHighlightedStepIndex
@@ -593,14 +608,17 @@
         if (!(candidate instanceof Element)) continue;
         if (seen.has(candidate)) continue;
         seen.add(candidate);
-        const candidateText = normalizeText(candidate.innerText || candidate.textContent || "");
+        const candidateText = normalizeText(
+          candidate.innerText || candidate.textContent || ""
+        );
         if (!candidateText) continue;
         if (candidateText === normalizedTarget) {
           return candidate;
         }
         if (
           !fallbackMatch &&
-          (candidateText.includes(normalizedTarget) || normalizedTarget.includes(candidateText))
+          (candidateText.includes(normalizedTarget) ||
+            normalizedTarget.includes(candidateText))
         ) {
           fallbackMatch = candidate;
         }
@@ -665,7 +683,8 @@
         roleAttr === "menuitem" ||
         tag === "a";
       if (isButtonish) score += 1.5;
-      const isInputControl = tag === "input" || tag === "textarea" || tag === "select";
+      const isInputControl =
+        tag === "input" || tag === "textarea" || tag === "select";
       if (isInputControl && !isButtonish) score -= 1.5;
       if (typeAttr === "search" || typeAttr === "text") score -= 0.8;
     }
@@ -682,12 +701,20 @@
     const targetTag = fp.tag || null;
     const targetRole = fp.role || null;
 
-    const isInputControl = tag === "input" || tag === "textarea" || tag === "select";
+    const isInputControl =
+      tag === "input" || tag === "textarea" || tag === "select";
     const isButtonish =
-      tag === "button" || role === "button" || role === "menuitem" || tag === "a";
+      tag === "button" ||
+      role === "button" ||
+      role === "menuitem" ||
+      tag === "a";
 
     // If the target was recorded as a button-ish control, skip plain inputs.
-    if ((targetTag === "button" || targetRole === "button") && isInputControl && !isButtonish) {
+    if (
+      (targetTag === "button" || targetRole === "button") &&
+      isInputControl &&
+      !isButtonish
+    ) {
       return true;
     }
 
@@ -713,7 +740,10 @@
 
       if (step.textSnapshot) {
         const searchTag = step.textTagName || step.tagName;
-        const textMatches = findElementByTextSnapshot(searchTag, step.textSnapshot);
+        const textMatches = findElementByTextSnapshot(
+          searchTag,
+          step.textSnapshot
+        );
         if (textMatches) {
           candidates.push({ el: textMatches, reason: "text" });
         }
@@ -771,7 +801,9 @@
   async function startPlayback(guide) {
     // Require auth token to run guides fetched from backend.
     const token = await new Promise((resolve) =>
-      chrome.storage.local.get("nexaura_token", (data) => resolve(data?.nexaura_token || null))
+      chrome.storage.local.get("nexaura_token", (data) =>
+        resolve(data?.nexaura_token || null)
+      )
     );
     if (!token) {
       alert("Please log in to NexAura before running a guide.");
@@ -814,8 +846,7 @@
     const resolveOpts = { timeoutMs: 6000, retries: 1 };
     if (!shouldSkipDelegation) {
       const frameMatches =
-        typeof step.frameId !== "number" ||
-        step.frameId === currentFrameId;
+        typeof step.frameId !== "number" || step.frameId === currentFrameId;
       if (!frameMatches) {
         return delegatePlaybackStep(step);
       }
@@ -869,7 +900,8 @@
       repairStepIndex = currentStepIndex;
       if (isTopFrame) {
         showRepairOverlay({
-          screenshot: step?.target?.vision?.templateId || step?.screenshot || null,
+          screenshot:
+            step?.target?.vision?.templateId || step?.screenshot || null,
         });
         setOverlayVisible(false);
       }
@@ -1005,14 +1037,11 @@
   }
 
   async function analyzeScreenWithServer(imageBase64, question) {
-    const res = await fetch(
-      "http://127.0.0.1:8000/api/analyze/analyze_live",
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ image_base64: imageBase64, question }),
-      }
-    );
+    const res = await fetch("http://127.0.0.1:8000/api/analyze/analyze_live", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ image_base64: imageBase64, question }),
+    });
     if (!res.ok) {
       const text = await res.text();
       throw new Error(`Analyze failed: ${res.status} ${text}`);
@@ -1034,7 +1063,9 @@
       chrome.storage.local.get("nexaura_screenshot_cache", (data) => {
         const cache = data?.nexaura_screenshot_cache || {};
         cache[guideId] = { ...(cache[guideId] || {}), ...stepMap };
-        chrome.storage.local.set({ nexaura_screenshot_cache: cache }, () => resolve());
+        chrome.storage.local.set({ nexaura_screenshot_cache: cache }, () =>
+          resolve()
+        );
       });
     });
   }
@@ -1326,8 +1357,13 @@
     }
     let newTarget = null;
     try {
-      const { captureTarget } = await loadModule("core/recording/captureTarget.js");
-      newTarget = captureTarget(el, { id: currentFrameId, href: window.location.href });
+      const { captureTarget } = await loadModule(
+        "core/recording/captureTarget.js"
+      );
+      newTarget = captureTarget(el, {
+        id: currentFrameId,
+        href: window.location.href,
+      });
     } catch (e) {
       console.warn("repair capture failed", e);
     }
@@ -1337,8 +1373,12 @@
       playbackGuide.steps[repairStepIndex]
     ) {
       playbackGuide.steps[repairStepIndex].target = newTarget;
-      if (!playbackGuide.steps[repairStepIndex].preferredLocators && newTarget?.preferredLocators) {
-        playbackGuide.steps[repairStepIndex].preferredLocators = newTarget.preferredLocators;
+      if (
+        !playbackGuide.steps[repairStepIndex].preferredLocators &&
+        newTarget?.preferredLocators
+      ) {
+        playbackGuide.steps[repairStepIndex].preferredLocators =
+          newTarget.preferredLocators;
       }
       // retry current step
       currentStepIndex = repairStepIndex;
@@ -1478,7 +1518,8 @@
     const step = steps[displayIndex];
     overlayPrimaryAction = handleOverlayNextStep;
     overlaySecondaryAction = handleOverlayStopPlayback;
-    const isLastHighlighted = hasActiveStep && displayIndex === steps.length - 1;
+    const isLastHighlighted =
+      hasActiveStep && displayIndex === steps.length - 1;
     setOverlayState({
       title: "Guide playback",
       body: `Step ${displayIndex + 1} of ${steps.length}\n${
@@ -1679,13 +1720,17 @@
       sendResponse?.({
         recording: isRecording,
         stepsCount: currentGuideSteps.length,
-        pendingStepsCount: pendingRecordingSteps ? pendingRecordingSteps.length : 0,
+        pendingStepsCount: pendingRecordingSteps
+          ? pendingRecordingSteps.length
+          : 0,
         overlayMode,
         playbackActive: !!playbackGuide,
         playbackIndex: currentStepIndex,
         playbackTotal: playbackGuide?.steps ? playbackGuide.steps.length : 0,
         playbackGuideName: playbackGuide ? playbackGuide.name : null,
-        playbackGuideShortcut: playbackGuide ? playbackGuide.shortcut || null : null,
+        playbackGuideShortcut: playbackGuide
+          ? playbackGuide.shortcut || null
+          : null,
       });
       return;
     }

@@ -15,7 +15,17 @@ function registerFrame(sender) {
 chrome.tabs.onRemoved.addListener((tabId) => {
   frameRegistry.delete(tabId);
 });
+chrome.action.onClicked.addListener((tab) => {
+  // ❌ Block PDFs and file URLs
+  if (tab.url.startsWith("file://") || tab.url.includes(".pdf")) {
+    return;
+  }
 
+  chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    files: ["content.js"],
+  });
+});
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   registerFrame(sender);
 
@@ -25,31 +35,31 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === "CAPTURE_SCREEN") {
-      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-        if (!tabs[0]) {
-          sendResponse({ error: "No active tab to capture" });
-          return;
-        }
-  
-        chrome.tabs.captureVisibleTab(
-          tabs[0].windowId,
-          { format: "png" },
-          (image) => {
-            if (chrome.runtime.lastError) {
-              sendResponse({ error: chrome.runtime.lastError.message });
-            } else {
-              sendResponse({ image });
-            }
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (!tabs[0]) {
+        sendResponse({ error: "No active tab to capture" });
+        return;
+      }
+
+      chrome.tabs.captureVisibleTab(
+        tabs[0].windowId,
+        { format: "png" },
+        (image) => {
+          if (chrome.runtime.lastError) {
+            sendResponse({ error: chrome.runtime.lastError.message });
+          } else {
+            sendResponse({ image });
           }
-        );
-      });
-      return true; // keep message channel open
-    }
-  
-    if (message.type === "GET_TAB_ID") {
-      sendResponse({ tabId: sender?.tab?.id ?? null });
-      return true;
-    }
+        }
+      );
+    });
+    return true; // keep message channel open
+  }
+
+  if (message.type === "GET_TAB_ID") {
+    sendResponse({ tabId: sender?.tab?.id ?? null });
+    return true;
+  }
 
   if (message.type === "GET_FRAME_ID") {
     sendResponse({ frameId: sender?.frameId ?? 0 });
@@ -100,8 +110,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         sendResponse({ ok: false, error: "No other frames available" });
         return;
       }
-      const ids = Array.from(frames).filter(
-        (fid) => typeof requesterFrameId === "number" ? fid !== requesterFrameId : true
+      const ids = Array.from(frames).filter((fid) =>
+        typeof requesterFrameId === "number" ? fid !== requesterFrameId : true
       );
       if (!ids.length) {
         sendResponse({ ok: false, error: "No other frames available" });

@@ -102,16 +102,6 @@ async function getActiveTabId() {
             color:white;
             cursor:pointer;
           ">Record Guide</button>
-  
-          <button id="fetchGuidesBtn" style="
-            flex:1;
-            padding:10px;
-            border-radius:8px;
-            border:none;
-            background:#555;
-            color:white;
-            cursor:pointer;
-          ">My Guides</button>
         </div>
   
         
@@ -136,7 +126,6 @@ async function getActiveTabId() {
     const msgInput = document.getElementById("msgInput");
     const sendBtn = document.getElementById("sendBtn");
     const recordBtn = document.getElementById("recordBtn");
-    const fetchGuidesBtn = document.getElementById("fetchGuidesBtn");
     const nextStepBtn = document.getElementById("nextStepBtn");
     const closeBtn = document.getElementById("closeBtn");
   
@@ -393,74 +382,6 @@ async function getActiveTabId() {
       }
     });
   
-    // ===============
-    // FETCH & RUN GUIDES (with Next Step)
-    // ===============
-    fetchGuidesBtn.addEventListener("click", async () => {
-      addMessage("bot", "Fetching your guides...");
-      const res = await sendToContent({ type: "GET_GUIDES" });
-  
-      if (!res?.ok) {
-        addMessage(
-          "bot",
-          `<strong>Error:</strong> ${escapeHtml(
-            res?.error || "Failed to fetch guides"
-          )}`
-        );
-        return;
-      }
-  
-      const guides = res.guides || [];
-      if (!guides.length) {
-        addMessage("bot", "You have no guides yet. Try recording one.");
-        return;
-      }
-  
-      const titles = guides
-        .map((g, i) => `${i + 1}. ${g.name} (${g.shortcut || ""})`)
-        .join("\n");
-      const choice = prompt(`Choose a guide number:\n${titles}`);
-      const idx = parseInt(choice, 10) - 1;
-      if (isNaN(idx) || idx < 0 || idx >= guides.length) {
-        addMessage("bot", "Invalid choice.");
-        return;
-      }
-  
-      const selected = guides[idx];
-      currentPlaybackGuide = selected;
-      currentPlaybackIndex = 0;
-  
-      addMessage(
-        "bot",
-        `▶️ Selected guide: <strong>${escapeHtml(
-          selected.name
-        )}</strong><br/>A compact playback box appears on the page so you can move through steps without the chat in the way.`
-      );
-  
-      const startRes = await sendToContent({
-        type: "START_PLAYBACK",
-        guide: selected,
-      });
-  
-      if (!startRes?.ok) {
-        addMessage(
-          "bot",
-          `<strong>Error:</strong> ${escapeHtml(
-            startRes?.error || "Could not start playback"
-          )}`
-        );
-        currentPlaybackGuide = null;
-        return;
-      }
-  
-      // enable Next Step button
-      nextStepBtn.disabled = false;
-      nextStepBtn.style.cursor = "pointer";
-      nextStepBtn.style.background = "#1f6feb";
-      nextStepBtn.style.color = "#fff";
-      nextStepBtn.textContent = "Start step 1 ▶";
-    });
-  
     chrome.runtime.onMessage.addListener((message) => {
       if (message.type === "OVERLAY_RECORDING_RESUMED") {
         if (!recording) {
@@ -632,7 +553,7 @@ async function getActiveTabId() {
     // ===============
     addMessage(
       "bot",
-      "👋 Hi — ask about this page or record guides. Use the buttons below to record a new guide or run existing ones. When running a guide, use <strong>Next step ▶</strong>; the element will be highlighted and you perform the action yourself."
+      "👋 Hi — ask about this page or record guides. To run an existing guide, type its shortcut like <code>/checkout</code>. When running a guide, use <strong>Next step ▶</strong>; the element will be highlighted and you perform the action yourself."
     );
   })();
   

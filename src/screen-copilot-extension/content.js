@@ -33,7 +33,6 @@
   window.addEventListener("message", handleOverlayFrameMessage);
   window.addEventListener("message", handleRepairOverlayMessage);
 
-  // ===== State =====
   let iframe = null;
   let isRecording = false;
   let currentGuideSteps = [];
@@ -106,17 +105,14 @@
   }
 
   async function initializeRecorderContext() {
+    // Global recording key so recording can persist across new tabs (e.g., docs opening a new tab).
     const tabId = await requestCurrentTabId();
-    if (tabId == null) {
-      currentTabId = `anon_${Date.now()}_${Math.random()
-        .toString(36)
-        .slice(2)}`;
-    } else {
-      currentTabId = tabId;
-    }
+    currentTabId = tabId == null
+      ? `anon_${Date.now()}_${Math.random().toString(36).slice(2)}`
+      : tabId;
     const frameId = await requestCurrentFrameId();
     currentFrameId = typeof frameId === "number" ? frameId : 0;
-    recordingStateKey = `${RECORDING_STATE_KEY_PREFIX}_${currentTabId}`;
+    recordingStateKey = `${RECORDING_STATE_KEY_PREFIX}_global`;
     bootstrap();
   }
 
@@ -180,6 +176,24 @@
       suppressStorageEvents = false;
     }
   }
+
+  // Force a sync before navigation/unload to preserve steps across SPA navigations.
+  window.addEventListener(
+    "pagehide",
+    () => {
+      if (!isRecording) return;
+      writeRecordingStateToStorage({
+        recording: isRecording,
+        steps: currentGuideSteps,
+        pendingSteps: pendingRecordingSteps,
+        playbackActive: !!playbackGuide,
+        playbackGuide,
+        playbackIndex: currentStepIndex,
+        lastHighlightedStepIndex,
+      });
+    },
+    { capture: true }
+  );
 
   async function clearRecordingStateStorage() {
     pendingRecordingSteps = null;
@@ -517,9 +531,14 @@
       value = target.innerText || "";
     }
 
-    let instruction = prompt("Describe this step:", "");
+    // Prompt for a human-friendly instruction, with a sane default.
+    const textHint = (target.innerText || target.textContent || "").trim();
+    const defaultInstruction = textHint
+      ? `Interact: ${textHint.slice(0, 60)}`
+      : "Step recorded";
+    let instruction = prompt("Describe this step:", defaultInstruction);
     if (!instruction || !instruction.trim()) {
-      instruction = "Step recorded";
+      instruction = defaultInstruction;
     }
 
     // NEW: capture a screenshot for this step (with the highlight visible)

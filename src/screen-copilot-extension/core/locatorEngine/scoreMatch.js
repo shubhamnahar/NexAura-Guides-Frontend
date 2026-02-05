@@ -7,6 +7,7 @@ export function scoreCandidate({ el, target }) {
   if (!el || !target) return 0;
   let score = 0;
   const fp = target.fingerprint || {};
+  const bbox = target.vision?.bbox;
 
   // 1. Tag Match
   if (fp.tag && el.tagName && el.tagName.toLowerCase() === fp.tag) score += 2;
@@ -56,9 +57,47 @@ export function scoreCandidate({ el, target }) {
     score += hits * 0.4;
   }
 
+  // 7. Geometry proximity (soft boost; avoids brittleness)
+  if (bbox && isFinite(bbox.x) && isFinite(bbox.y) && isFinite(bbox.width) && isFinite(bbox.height)) {
+    const elRect = el.getBoundingClientRect();
+    const iou = computeIoU(elRect, bbox);
+    const centerDrift = computeCenterDrift(elRect, bbox);
+    // Boost if overlap is meaningful or drift is small
+    if (iou > 0.15) {
+      score += iou * 2; // up to ~0.6 boost
+    }
+    if (centerDrift < 0.25) {
+      score += (1 - centerDrift) * 1.5; // up to ~1.5 boost when centered
+    }
+  }
+
   if (isVisible(el)) score += 1;
 
   return score;
+}
+
+function computeIoU(rect, box) {
+  const xA = Math.max(rect.x, box.x);
+  const yA = Math.max(rect.y, box.y);
+  const xB = Math.min(rect.x + rect.width, box.x + box.width);
+  const yB = Math.min(rect.y + rect.height, box.y + box.height);
+  const interArea = Math.max(0, xB - xA) * Math.max(0, yB - yA);
+  const boxArea = rect.width * rect.height + box.width * box.height - interArea;
+  if (boxArea <= 0) return 0;
+  return interArea / boxArea;
+}
+
+function computeCenterDrift(rect, box) {
+  const cx1 = rect.x + rect.width / 2;
+  const cy1 = rect.y + rect.height / 2;
+  const cx2 = box.x + box.width / 2;
+  const cy2 = box.y + box.height / 2;
+  const dx = cx1 - cx2;
+  const dy = cy1 - cy2;
+  const norm = Math.hypot(dx, dy);
+  // Normalize by diagonal length of recorded box to avoid huge numbers
+  const diag = Math.hypot(box.width, box.height) || 1;
+  return Math.min(norm / diag, 1);
 }
 
 function computeAncestorSimilarity(el, recordedTrail) {

@@ -23,6 +23,7 @@ export function buildEmptyStepTarget() {
       attrs: {},
       classTokens: [],
     },
+    innerText: null,
     context: {
       ancestorTrail: [],
       siblingIndex: null,
@@ -67,12 +68,17 @@ export function migrateStep(rawStep, now = Date.now()) {
       confidence: 0.35,
     });
     step.target.fingerprint.text = normalizeText(rawStep.textSnapshot);
+    step.target.innerText = rawStep.textSnapshot;
   }
   if (rawStep.textTagName) {
     step.target.fingerprint.tag = rawStep.textTagName;
   }
   if (rawStep.tagName) {
     step.target.fingerprint.tag = rawStep.tagName;
+  }
+
+  if (rawStep.innerText) {
+    step.target.innerText = rawStep.innerText;
   }
 
   if (rawStep.frameId != null || rawStep.frameHref) {

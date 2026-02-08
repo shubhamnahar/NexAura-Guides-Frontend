@@ -475,9 +475,29 @@
     if (!isRecording || isProgrammaticallyClicking) return;
     if (peekHandle && peekHandle.contains(event.target)) return;
 
+    // --- NEW: LINK NAVIGATION INTERCEPTION ---
+    // We must intercept clicks that would cause the page to unload immediately.
+    const linkElement = event.target.closest("a");
+    let pendingNavigation = null;
+
+    if (linkElement && linkElement.href) {
+      const targetAttr = linkElement.getAttribute("target");
+      const isNewTab = targetAttr === "_blank";
+      const isHash = linkElement.getAttribute("href").startsWith("#");
+      const isJs = linkElement.href.startsWith("javascript:");
+
+      // If it's a standard navigation (same tab), we MUST pause it to save data.
+      if (!isNewTab && !isHash && !isJs) {
+        event.preventDefault(); // STOP the browser from leaving
+        pendingNavigation = linkElement.href; // Remember where to go
+      }
+    }
+    // -----------------------------------------
+
     const target = event.target;
     if (!(target instanceof Element)) return;
 
+    // 1. Visual Feedback
     const rect = target.getBoundingClientRect();
     showLiveHighlight(
       [
@@ -492,12 +512,14 @@
       1800
     );
 
+    // 2. Determine Input Type
     const isInput =
       (target.tagName === "INPUT" &&
         /text|email|search|password|tel|url/i.test(target.type)) ||
       target.tagName === "TEXTAREA";
     const isContentEditable = target.isContentEditable;
 
+    // 3. Capture Rich Target Data
     let capturedTarget = null;
     try {
       const { captureTarget } = await loadModule(
@@ -511,7 +533,7 @@
       console.warn("captureTarget failed", e);
     }
 
-    // Prefer the finder-generated selector if present; otherwise fall back to legacy heuristic.
+    // 4. Generate/Fallback Selector
     const finderLocator =
       capturedTarget?.preferredLocators?.find(
         (l) => l?.type === "css" && l.confidence >= 0.75
@@ -521,6 +543,7 @@
       console.warn("NexAura: couldn't generate selector");
     }
 
+    // 5. Determine Action & Value
     let action = "click";
     let value = null;
     if (isInput) {
@@ -531,17 +554,19 @@
       value = target.innerText || "";
     }
 
-    // Prompt for a human-friendly instruction, with a sane default.
+    // 6. Prompt for Instruction
     const textHint = (target.innerText || target.textContent || "").trim();
     const defaultInstruction = textHint
       ? `Interact: ${textHint.slice(0, 60)}`
       : "Step recorded";
+    
+    // NOTE: This prompt blocks the UI, giving us time to think.
     let instruction = prompt("Describe this step:", defaultInstruction);
     if (!instruction || !instruction.trim()) {
       instruction = defaultInstruction;
     }
 
-    // NEW: capture a screenshot for this step (with the highlight visible)
+    // 7. Capture Screenshot
     let screenshot = null;
     try {
       screenshot = await captureScreen();
@@ -549,16 +574,32 @@
       console.warn("Failed to capture step screenshot:", e);
     }
 
+    // 8. MERGE DATA (Essential for Playback)
+    const finalTarget = capturedTarget ? { ...capturedTarget } : {};
+    finalTarget.innerText = textHint;
+
+    // 9. Save Step
     currentGuideSteps.push({
       selector,
       instruction: instruction.trim(),
       action,
       value,
       tagName: target.tagName ? target.tagName.toLowerCase() : null,
-      target: capturedTarget || null,
-      screenshot, // base64 image for backend
+      target: finalTarget,
+      screenshot, 
     });
+
+    // 10. FORCE SYNC (Critical!)
     await syncSharedState();
+
+    // --- NEW: SAFETY DELAY & MANUAL NAVIGATION ---
+    // Give Chrome storage 500ms to flush data to disk before we kill the page.
+    if (pendingNavigation) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        console.log("NexAura: Resuming navigation to", pendingNavigation);
+        window.location.href = pendingNavigation;
+    }
+    // ---------------------------------------------
   }
 
   function attachRecordingHooks() {
@@ -752,7 +793,24 @@
     for (let i = 0; i < maxAttempts; i++) {
       const candidates = [];
       const selectorMatches = findElementsBySelector(step.selector);
-      selectorMatches.forEach((el) => {
+
+      // Text-based disambiguation for repeated selectors (e.g., Trello cards with the same data-testid).
+      let filteredMatches = selectorMatches;
+      const recordedText =
+        typeof step?.target?.innerText === "string"
+          ? step.target.innerText.trim()
+          : "";
+      if (recordedText && selectorMatches.length > 1) {
+        const textMatches = selectorMatches.filter((el) => {
+          const txt = (el.innerText || el.textContent || "").trim();
+          return txt && txt.includes(recordedText);
+        });
+        if (textMatches.length) {
+          filteredMatches = textMatches;
+        }
+      }
+
+      filteredMatches.forEach((el) => {
         if (!el) return;
         candidates.push({ el, reason: "selector" });
       });
@@ -1559,11 +1617,18 @@
   }
 
   async function handleOverlayStopRecording() {
+    // --- NEW: CRITICAL FIX ---
+    // Always check for restored state first. If the page just loaded,
+    // we might not have pulled the data from storage yet.
+    await restoreRecordingStateIfNeeded();
+    // -------------------------
+
     if (!isRecording) {
       exitRecordingOverlay();
       showPanel();
       return;
     }
+    
     setOverlayState({ primaryEnabled: false });
     await stopRecording();
     const steps = currentGuideSteps.slice();
@@ -1680,6 +1745,12 @@
 
     if (message.type === "STOP_RECORDING") {
       (async () => {
+        // --- NEW: WAIT FOR RESTORE ---
+        // Ensure we have loaded the steps from storage (from previous page)
+        // before we finalize the recording.
+        await restoreRecordingStateIfNeeded();
+        // -----------------------------
+
         await stopRecording();
         showPanel();
         const steps = currentGuideSteps.slice();
@@ -1815,7 +1886,6 @@
     }
 
     if (message.type === "CAPTURE_SCREEN") {
-      // Optional passthrough (not used directly now; we call captureScreen() instead)
       (async () => {
         try {
           const image = await captureScreen();

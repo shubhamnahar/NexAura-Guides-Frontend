@@ -88,7 +88,7 @@ export function captureTarget(element, frameInfo = {}) {
   };
 
   const anchor = findStableAnchor(element);
-  const containerAnchor = findContainerAnchor(element);
+  const containerAnchor = getContainerAnchor(element);
 
   return {
     preferredLocators: locatorList,

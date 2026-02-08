@@ -60,6 +60,8 @@ function resolveInFrame(frame, target, debug) {
   const seenElements = new Map();
   const locatorsRaw = Array.isArray(target.preferredLocators) ? target.preferredLocators : [];
   const locators = locatorsRaw.slice().sort((a, b) => locatorSpecificity(b) - locatorSpecificity(a));
+  const containerText = normalize(target?.containerAnchor?.text || "");
+  const hasContainerScope = !!containerText;
 
   const pushCandidates = (list, why, confidence = 0.5, loc = null) => {
     list.forEach((el) => {
@@ -74,6 +76,10 @@ function resolveInFrame(frame, target, debug) {
         candidate = { el, score: baseScore, why };
         seenElements.set(el, candidate);
         candidates.push(candidate);
+      }
+      if (hasContainerScope) {
+        const inContainer = isInsideContainer(el, containerText);
+        candidate.score += inContainer ? 50 : -20; // strong bonus, slight penalty when outside
       }
       candidate.score += confidence * 2;
     });
@@ -121,14 +127,6 @@ function resolveInFrame(frame, target, debug) {
     const anchorResult = findTargetByAnchor(win, target);
     if (anchorResult) {
       pushCandidates([anchorResult], "anchor", 0.9);
-    }
-  }
-
-  // Container-anchor-based fallback: scope search within container that matches the label text.
-  if (!candidates.length && target.containerAnchor?.text) {
-    const scoped = findTargetByContainerAnchor(win, target);
-    if (scoped) {
-      pushCandidates([scoped], "containerAnchor", 0.9);
     }
   }
 
@@ -257,6 +255,25 @@ function locatorSpecificity(loc) {
   if (loc.type === "id") score += 3;
   if (loc.type === "text") score += 1.5;
   return score;
+}
+
+function normalize(str) {
+  if (!str) return "";
+  return String(str).replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function isInsideContainer(el, containerText) {
+  if (!el || !containerText) return false;
+  let node = el;
+  const MAX_DEPTH = 10;
+  let depth = 0;
+  while (node && depth < MAX_DEPTH) {
+    const text = normalize(node.textContent || "");
+    if (text && text.includes(containerText)) return true;
+    node = node.parentElement;
+    depth++;
+  }
+  return false;
 }
 
 function wait(ms) {

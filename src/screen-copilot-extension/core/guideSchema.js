@@ -42,12 +42,41 @@ export function buildEmptyStepTarget() {
 }
 
 export function migrateStep(rawStep, now = Date.now()) {
+  const baseTarget = buildEmptyStepTarget();
+  const rawTarget =
+    rawStep && rawStep.target && typeof rawStep.target === "object"
+      ? rawStep.target
+      : null;
+  const mergedTarget = rawTarget
+    ? {
+        ...baseTarget,
+        ...rawTarget,
+        preferredLocators: Array.isArray(rawTarget.preferredLocators)
+          ? rawTarget.preferredLocators.slice()
+          : baseTarget.preferredLocators,
+        fingerprint: {
+          ...baseTarget.fingerprint,
+          ...(rawTarget.fingerprint || {}),
+        },
+        context: {
+          ...baseTarget.context,
+          ...(rawTarget.context || {}),
+          frame: {
+            ...baseTarget.context.frame,
+            ...((rawTarget.context && rawTarget.context.frame) || {}),
+          },
+        },
+        vision: { ...baseTarget.vision, ...(rawTarget.vision || {}) },
+        history: { ...baseTarget.history, ...(rawTarget.history || {}) },
+      }
+    : baseTarget;
+
   const step = {
     id: rawStep.id || null,
     step_number: rawStep.step_number || rawStep.stepNumber || 0,
     action: rawStep.action || "click",
     instruction: rawStep.instruction || rawStep.text || "",
-    target: buildEmptyStepTarget(),
+    target: mergedTarget,
     createdAt: rawStep.createdAt || now,
     updatedAt: now,
     version: GUIDE_VERSION,

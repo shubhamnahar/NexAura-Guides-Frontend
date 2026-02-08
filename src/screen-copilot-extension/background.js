@@ -40,6 +40,7 @@ chrome.action.onClicked.addListener((tab) => {
   if (tab.url.startsWith("file://") || tab.url.includes(".pdf")) {
     return;
   }
+});
 
 // Message handlers
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {

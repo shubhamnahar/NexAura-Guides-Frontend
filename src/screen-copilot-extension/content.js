@@ -17,6 +17,10 @@
 
   const isTopFrame = window.top === window;
 
+  const PENDING_STEP_KEY = "nexaura_pending_step";
+  const REPLAY_DELAY_MS = 50;
+  let recoveredPendingStep = null;
+
   // ===== LISTEN FOR TOKEN FROM LOGIN PAGE =====
   window.addEventListener("message", (event) => {
     const msg = event.data;
@@ -67,6 +71,24 @@
   let restoreRecordingPromise = null;
   const moduleCache = {};
   const readyPromise = initializeRecorderContext();
+
+  // Recover any step that was synchronously persisted before the previous page unload.
+  (function recoverPendingStep() {
+    try {
+      const raw = sessionStorage.getItem(PENDING_STEP_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      recoveredPendingStep = parsed;
+      // Send it to the background immediately so it gets persisted.
+      chrome.runtime.sendMessage({ type: "RECORD_STEP", payload: parsed }, () => {});
+      sessionStorage.removeItem(PENDING_STEP_KEY);
+    } catch (err) {
+      console.warn("NexAura: failed to recover pending step", err);
+      try {
+        sessionStorage.removeItem(PENDING_STEP_KEY);
+      } catch (_) {}
+    }
+  })();
 
   async function loadModule(path) {
     if (!moduleCache[path]) {
@@ -301,6 +323,15 @@
       if (!saved) return;
 
       applyRecordingStateSnapshot(saved);
+      if (recoveredPendingStep) {
+        if (saved.recording) {
+          currentGuideSteps.push(recoveredPendingStep);
+          recoveredPendingStep = null;
+          await syncSharedState();
+        } else {
+          recoveredPendingStep = null;
+        }
+      }
       if (saved.recording && isTopFrame) {
         chrome.runtime.sendMessage(
           {
@@ -470,62 +501,100 @@
     });
   }
 
-  // ---------- recording ----------
-  async function onRecordClick(event) {
-    if (!isRecording || isProgrammaticallyClicking) return;
-    if (peekHandle && peekHandle.contains(event.target)) return;
-
-    // --- NEW: LINK NAVIGATION INTERCEPTION ---
-    // We must intercept clicks that would cause the page to unload immediately.
-    const linkElement = event.target.closest("a");
-    let pendingNavigation = null;
-
-    if (linkElement && linkElement.href) {
-      const targetAttr = linkElement.getAttribute("target");
-      const isNewTab = targetAttr === "_blank";
-      const isHash = linkElement.getAttribute("href").startsWith("#");
-      const isJs = linkElement.href.startsWith("javascript:");
-
-      // If it's a standard navigation (same tab), we MUST pause it to save data.
-      if (!isNewTab && !isHash && !isJs) {
-        event.preventDefault(); // STOP the browser from leaving
-        pendingNavigation = linkElement.href; // Remember where to go
-      }
+  function persistPendingStep(step) {
+    try {
+      sessionStorage.setItem(PENDING_STEP_KEY, JSON.stringify(step));
+    } catch (err) {
+      console.warn("NexAura: failed to persist pending step", err);
     }
-    // -----------------------------------------
+  }
 
-    const target = event.target;
-    if (!(target instanceof Element)) return;
+  function clearPendingStep() {
+    try {
+      sessionStorage.removeItem(PENDING_STEP_KEY);
+    } catch (err) {
+      console.warn("NexAura: failed to clear pending step", err);
+    }
+  }
 
-    // 1. Visual Feedback
-    const rect = target.getBoundingClientRect();
-    showLiveHighlight(
-      [
-        {
-          x: rect.left,
-          y: rect.top,
-          w: rect.width,
-          h: rect.height,
-          summary: "Recorded step",
-        },
-      ],
-      1800
-    );
+  function captureScreenWithTimeout(timeoutMs = 200) {
+    return new Promise((resolve) => {
+      let done = false;
+      const timer = setTimeout(() => {
+        if (done) return;
+        done = true;
+        resolve(null);
+      }, timeoutMs);
+      captureScreen()
+        .then((img) => {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          resolve(img);
+        })
+        .catch(() => {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          resolve(null);
+        });
+    });
+  }
 
-    // 2. Determine Input Type
+  // ---------- recording ----------
+  async function handleInteraction(event) {
+    if (!isRecording || isProgrammaticallyClicking) return;
+    if (!event.isTrusted) return;
+
+    const target =
+      event.target instanceof Element
+        ? event.target
+        : event.target?.parentElement || null;
+    if (!target) return;
+    if (peekHandle && peekHandle.contains(target)) return;
+
+    // Freeze the page immediately so we can persist the step safely.
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+
+    const actionType = event.type === "submit" ? "submit" : "click";
+    const actionable =
+      actionType === "submit" ? target.closest("form") || target : target;
+
+    // Visual feedback to confirm we caught the interaction.
+    try {
+      const rect = actionable.getBoundingClientRect();
+      showLiveHighlight(
+        [
+          {
+            x: rect.left,
+            y: rect.top,
+            w: rect.width,
+            h: rect.height,
+            summary: "Recorded step",
+          },
+        ],
+        1200
+      );
+    } catch (err) {
+      console.warn("NexAura: highlight failed", err);
+    }
+
+    // Determine input/value semantics.
     const isInput =
-      (target.tagName === "INPUT" &&
-        /text|email|search|password|tel|url/i.test(target.type)) ||
-      target.tagName === "TEXTAREA";
-    const isContentEditable = target.isContentEditable;
+      (actionable.tagName === "INPUT" &&
+        /text|email|search|password|tel|url/i.test(actionable.type)) ||
+      actionable.tagName === "TEXTAREA";
+    const isContentEditable = actionable.isContentEditable;
 
-    // 3. Capture Rich Target Data
+    // Capture rich target metadata.
     let capturedTarget = null;
     try {
       const { captureTarget } = await loadModule(
         "core/recording/captureTarget.js"
       );
-      capturedTarget = captureTarget(target, {
+      capturedTarget = captureTarget(actionable, {
         id: currentFrameId,
         href: window.location.href,
       });
@@ -533,79 +602,127 @@
       console.warn("captureTarget failed", e);
     }
 
-    // 4. Generate/Fallback Selector
     const finderLocator =
       capturedTarget?.preferredLocators?.find(
         (l) => l?.type === "css" && l.confidence >= 0.75
       ) || null;
-    const selector = finderLocator?.value || getCssSelector(target);
+    const selector = finderLocator?.value || getCssSelector(actionable);
     if (!selector) {
       console.warn("NexAura: couldn't generate selector");
     }
 
-    // 5. Determine Action & Value
-    let action = "click";
+    let action = actionType === "submit" ? "submit" : "click";
     let value = null;
-    if (isInput) {
-      action = "type";
-      value = target.value || "";
-    } else if (isContentEditable) {
-      action = "type";
-      value = target.innerText || "";
+    if (action !== "submit") {
+      if (isInput) {
+        action = "type";
+        value = actionable.value || "";
+      } else if (isContentEditable) {
+        action = "type";
+        value = actionable.innerText || "";
+      }
     }
 
-    // 6. Prompt for Instruction
-    const textHint = (target.innerText || target.textContent || "").trim();
+    const textHint = (actionable.innerText || actionable.textContent || "").trim();
     const defaultInstruction = textHint
       ? `Interact: ${textHint.slice(0, 60)}`
       : "Step recorded";
-    
-    // NOTE: This prompt blocks the UI, giving us time to think.
-    let instruction = prompt("Describe this step:", defaultInstruction);
-    if (!instruction || !instruction.trim()) {
-      instruction = defaultInstruction;
-    }
-
-    // 7. Capture Screenshot
-    let screenshot = null;
+    let instruction = defaultInstruction;
     try {
-      screenshot = await captureScreen();
-    } catch (e) {
-      console.warn("Failed to capture step screenshot:", e);
-    }
+      const prompted = prompt("Describe this step:", defaultInstruction);
+      if (prompted && prompted.trim()) {
+        instruction = prompted.trim();
+      }
+    } catch (_) {}
 
-    // 8. MERGE DATA (Essential for Playback)
     const finalTarget = capturedTarget ? { ...capturedTarget } : {};
     finalTarget.innerText = textHint;
 
-    // 9. Save Step
-    currentGuideSteps.push({
+    const step = {
       selector,
-      instruction: instruction.trim(),
+      instruction,
       action,
       value,
-      tagName: target.tagName ? target.tagName.toLowerCase() : null,
+      tagName: actionable.tagName ? actionable.tagName.toLowerCase() : null,
       target: finalTarget,
-      screenshot, 
+      screenshot: null,
+      frameId: currentFrameId,
+      frameHref: window.location.href,
+      createdAt: Date.now(),
+      eventType: actionType,
+    };
+
+    // Persist synchronously so we survive reloads.
+    persistPendingStep(step);
+
+    // Attempt a quick screenshot without blocking too long.
+    try {
+      const screenshot = await captureScreenWithTimeout(200);
+      if (screenshot) {
+        step.screenshot = screenshot;
+        persistPendingStep(step); // refresh with screenshot
+      }
+    } catch (err) {
+      console.warn("NexAura: screenshot (fast) failed", err);
+    }
+
+    // Send to background as a backup channel.
+    const sendToBackground = new Promise((resolve) => {
+      chrome.runtime.sendMessage(
+        { type: "RECORD_STEP", payload: step },
+        (res) => {
+          if (chrome.runtime.lastError) {
+            console.warn(
+              "RECORD_STEP failed:",
+              chrome.runtime.lastError.message
+            );
+            resolve(false);
+            return;
+          }
+          if (res?.ok) {
+            clearPendingStep();
+          }
+          resolve(true);
+        }
+      );
     });
 
-    // 10. FORCE SYNC (Critical!)
+    currentGuideSteps.push(step);
     await syncSharedState();
 
-    // --- NEW: SAFETY DELAY & MANUAL NAVIGATION ---
-    // Give Chrome storage 500ms to flush data to disk before we kill the page.
-    if (pendingNavigation) {
-        await new Promise(resolve => setTimeout(resolve, 500));
-        console.log("NexAura: Resuming navigation to", pendingNavigation);
-        window.location.href = pendingNavigation;
-    }
-    // ---------------------------------------------
+    // Replay the user's intended action after a short pause.
+    setTimeout(() => {
+      try {
+        isProgrammaticallyClicking = true;
+        if (actionType === "submit") {
+          const form = actionable.closest("form");
+          if (form) {
+            form.submit();
+          } else if (typeof actionable.submit === "function") {
+            actionable.submit();
+          } else {
+            actionable.click();
+          }
+        } else {
+          actionable.click();
+        }
+      } catch (err) {
+        console.warn("NexAura: replay failed", err);
+      } finally {
+        setTimeout(() => {
+          isProgrammaticallyClicking = false;
+        }, 0);
+      }
+    }, REPLAY_DELAY_MS);
+
+    await sendToBackground;
   }
 
   function attachRecordingHooks() {
     if (isRecording) return;
     isRecording = true;
-    document.body.addEventListener("click", onRecordClick, true);
+    document.addEventListener("click", handleInteraction, true);
+    document.addEventListener("submit", handleInteraction, true);
     if (isTopFrame) {
       enterRecordingOverlay();
     }
@@ -614,7 +731,8 @@
   function detachRecordingHooks() {
     if (!isRecording) return;
     isRecording = false;
-    document.body.removeEventListener("click", onRecordClick, true);
+    document.removeEventListener("click", handleInteraction, true);
+    document.removeEventListener("submit", handleInteraction, true);
     if (isTopFrame) {
       exitRecordingOverlay();
     }

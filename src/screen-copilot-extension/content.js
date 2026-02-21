@@ -80,7 +80,11 @@
       const parsed = JSON.parse(raw);
       recoveredPendingStep = parsed;
       // Send it to the background immediately so it gets persisted.
-      chrome.runtime.sendMessage({ type: "RECORD_STEP", payload: parsed }, () => {});
+      try {
+        chrome.runtime.sendMessage({ type: "RECORD_STEP", payload: parsed }, () => {});
+      } catch (err) {
+        console.warn("NexAura: background handoff failed during recovery", err);
+      }
       sessionStorage.removeItem(PENDING_STEP_KEY);
     } catch (err) {
       console.warn("NexAura: failed to recover pending step", err);
@@ -561,6 +565,16 @@
     const actionType = event.type === "submit" ? "submit" : "click";
     const actionable =
       actionType === "submit" ? target.closest("form") || target : target;
+    const submitter =
+      actionType === "submit"
+        ? event.submitter ||
+          (target.matches &&
+          target.matches('button[type="submit"],input[type="submit"]')
+            ? target
+            : actionable.querySelector &&
+              actionable.querySelector('button[type="submit"],input[type="submit"]')) ||
+          null
+        : null;
 
     // Visual feedback to confirm we caught the interaction.
     try {
@@ -655,9 +669,9 @@
     // Persist synchronously so we survive reloads.
     persistPendingStep(step);
 
-    // Attempt a quick screenshot without blocking too long.
+    // Wait for the screenshot (up to 2500ms) before sending to the background
     try {
-      const screenshot = await captureScreenWithTimeout(200);
+      const screenshot = await captureScreenWithTimeout(2500);
       if (screenshot) {
         step.screenshot = screenshot;
         persistPendingStep(step); // refresh with screenshot
@@ -666,37 +680,38 @@
       console.warn("NexAura: screenshot (fast) failed", err);
     }
 
-    // Send to background as a backup channel.
+    // NOW send to background, ensuring the screenshot is attached if it succeeded
     const sendToBackground = new Promise((resolve) => {
-      chrome.runtime.sendMessage(
-        { type: "RECORD_STEP", payload: step },
-        (res) => {
-          if (chrome.runtime.lastError) {
-            console.warn(
-              "RECORD_STEP failed:",
-              chrome.runtime.lastError.message
-            );
-            resolve(false);
-            return;
-          }
-          if (res?.ok) {
-            clearPendingStep();
-          }
-          resolve(true);
+      chrome.runtime.sendMessage({ type: "RECORD_STEP", payload: step }, (res) => {
+        if (chrome.runtime.lastError) {
+          console.warn("RECORD_STEP failed:", chrome.runtime.lastError.message);
+          resolve(false);
+          return;
         }
-      );
+        if (res?.ok) {
+          clearPendingStep();
+        }
+        resolve(true);
+      });
     });
 
     currentGuideSteps.push(step);
-    await syncSharedState();
+
+    // We await these so they finish before we trigger the actual click replay
+    await syncSharedState().catch((err) =>
+      console.warn("NexAura: async syncSharedState failed", err)
+    );
+    await sendToBackground;
 
     // Replay the user's intended action after a short pause.
     setTimeout(() => {
       try {
         isProgrammaticallyClicking = true;
         if (actionType === "submit") {
-          const form = actionable.closest("form");
-          if (form) {
+          const form = actionable.closest("form") || actionable;
+          if (form && typeof form.requestSubmit === "function") {
+            form.requestSubmit(submitter || undefined);
+          } else if (form && typeof form.submit === "function") {
             form.submit();
           } else if (typeof actionable.submit === "function") {
             actionable.submit();
@@ -704,7 +719,24 @@
             actionable.click();
           }
         } else {
-          actionable.click();
+          // 1. Dispatch a fully simulated, bubbling event for SPAs like React
+          const simulatedEvent = new MouseEvent("click", {
+            view: window,
+            bubbles: true,
+            cancelable: true,
+            composed: true, // Crucial for Shadow DOMs and React event delegation
+            buttons: 1
+          });
+          
+          actionable.dispatchEvent(simulatedEvent);
+
+          // 2. Fallback: If it's an SVG or span inside an <a> tag, and the SPA 
+          // didn't handle the simulated event, force the native behavior
+          const anchor = actionable.closest("a");
+          if (anchor && anchor.href && !anchor.href.startsWith("javascript:") && !anchor.getAttribute('href').startsWith('#')) {
+             // If the click wasn't caught by the SPA router, manually navigate
+             window.location.href = anchor.href;
+          }
         }
       } catch (err) {
         console.warn("NexAura: replay failed", err);
@@ -714,8 +746,6 @@
         }, 0);
       }
     }, REPLAY_DELAY_MS);
-
-    await sendToBackground;
   }
 
   function attachRecordingHooks() {

@@ -1,11 +1,12 @@
 // background.js — MV3 service worker
-// Implements "Background Master" pattern: background owns recording state in chrome.storage.session.
+// Implements "Background Master" pattern: background owns recording state in chrome.storage.local.
 
 const RECORDING_KEY = "nexaura_recording_session";
 const frameRegistry = new Map();
 
 async function getRecordingState() {
-  const data = await chrome.storage.session.get(RECORDING_KEY);
+  // FIXED: Changed from session to local to avoid the strict 1MB session limit
+  const data = await chrome.storage.local.get(RECORDING_KEY);
   return (
     data[RECORDING_KEY] || {
       active: false,
@@ -17,7 +18,8 @@ async function getRecordingState() {
 }
 
 async function setRecordingState(next) {
-  await chrome.storage.session.set({ [RECORDING_KEY]: next });
+  // FIXED: Changed from session to local
+  await chrome.storage.local.set({ [RECORDING_KEY]: next });
 }
 
 function registerFrame(sender) {
@@ -60,7 +62,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             sendResponse({ error: "No active tab to capture" });
             return;
           }
-          chrome.tabs.captureVisibleTab(tabs[0].windowId, { format: "png" }, (image) => {
+          // FIXED: Compressing image to jpeg at 50% quality to prevent hitting the 5MB storage limit
+          chrome.tabs.captureVisibleTab(tabs[0].windowId, { format: "jpeg", quality: 50 }, (image) => {
             if (chrome.runtime.lastError) {
               sendResponse({ error: chrome.runtime.lastError.message });
             } else {

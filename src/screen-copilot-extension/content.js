@@ -487,8 +487,10 @@
         label.textContent = h.summary;
         box.appendChild(label);
       }
-      document.body.appendChild(box);
-      setTimeout(() => box.remove(), duration);
+      document.documentElement.appendChild(box);
+      setTimeout(() => {
+        if (box.parentElement) box.remove();
+      }, duration);
     });
   }
 
@@ -589,11 +591,14 @@
             summary: "Recorded step",
           },
         ],
-        1200
+        3000 // Increased duration to ensure it's captured in the screenshot
       );
     } catch (err) {
       console.warn("NexAura: highlight failed", err);
     }
+
+    // Give the browser a moment to paint the highlight before capturing the screen
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
 
     // Determine input/value semantics.
     const isInput =
@@ -719,16 +724,26 @@
             actionable.click();
           }
         } else {
-          // 1. Dispatch a fully simulated, bubbling event for SPAs like React
-          const simulatedEvent = new MouseEvent("click", {
+          const eventInit = {
             view: window,
             bubbles: true,
             cancelable: true,
             composed: true, // Crucial for Shadow DOMs and React event delegation
-            buttons: 1
-          });
-          
-          actionable.dispatchEvent(simulatedEvent);
+            buttons: (event && event.buttons) || 1,
+            clientX: (event && event.clientX) || 0,
+            clientY: (event && event.clientY) || 0,
+            screenX: (event && event.screenX) || 0,
+            screenY: (event && event.screenY) || 0,
+            ctrlKey: (event && event.ctrlKey) || false,
+            altKey: (event && event.altKey) || false,
+            shiftKey: (event && event.shiftKey) || false,
+            metaKey: (event && event.metaKey) || false
+          };
+
+          // 1. Dispatch a full sequence of events for SPAs like React and for complex players like YouTube
+          actionable.dispatchEvent(new MouseEvent("mousedown", eventInit));
+          actionable.dispatchEvent(new MouseEvent("mouseup", eventInit));
+          actionable.dispatchEvent(new MouseEvent("click", eventInit));
 
           // 2. Fallback: If it's an SVG or span inside an <a> tag, and the SPA 
           // didn't handle the simulated event, force the native behavior

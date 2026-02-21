@@ -17,6 +17,17 @@
 
   const isTopFrame = window.top === window;
 
+  function scaleBboxByDpr(rect) {
+  const dpr = window.devicePixelRatio || 1;
+  return {
+    x: rect.left * dpr,
+    y: rect.top * dpr,
+    width: rect.width * dpr,
+    height: rect.height * dpr,
+    dpr: dpr
+  };
+}
+
   const PENDING_STEP_KEY = "nexaura_pending_step";
   const REPLAY_DELAY_MS = 50;
   let recoveredPendingStep = null;
@@ -617,6 +628,10 @@
         id: currentFrameId,
         href: window.location.href,
       });
+      // Scale bbox by DPR for correct highlight position
+      if (capturedTarget?.vision?.bbox) {
+        capturedTarget.vision.bbox = scaleBboxByDpr(actionable.getBoundingClientRect());
+      }
     } catch (e) {
       console.warn("captureTarget failed", e);
     }

@@ -8,7 +8,7 @@ import './GuideCard.css';
  * - showDelete: boolean (show delete button)
  * - onDelete: function(guideId)
  * - showDownload: boolean (show download button)
- * - onDownload: function(guideId)
+ * - onDownload: function(guide)
  */
 const GuideCard = ({
   guide,
@@ -35,7 +35,7 @@ const GuideCard = ({
   const handleDownloadClick = (e) => {
     e.stopPropagation();
     if (!onDownload) return;
-    onDownload(guide.id);
+    onDownload(guide);
   };
 
   const hasActions = showDelete || showDownload;

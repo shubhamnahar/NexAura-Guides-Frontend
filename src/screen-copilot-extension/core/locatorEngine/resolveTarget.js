@@ -66,10 +66,25 @@ function resolveInFrame(frame, target, debug) {
   const pushCandidates = (list, why, confidence = 0.5, loc = null) => {
     list.forEach((el) => {
       const textFilter = loc?.textFilter || (loc?.type === "css" ? target.innerText : null);
+      let textPenalty = 0; // NEW: Penalty to downgrade massive wrappers
+      
       if (textFilter) {
-        const txt = (el.innerText || "").trim();
-        if (txt !== textFilter.trim()) return; // text-filter disambiguation for repeated selectors
+        // Use the existing normalize() helper to strip weird spacing and casing
+        const txt = normalize(el.innerText || el.textContent || "");
+        const filter = normalize(textFilter);
+        
+        // RELAXED MATCHING: Only discard if there is no substring match at all
+        if (filter && !txt.includes(filter) && !filter.includes(txt)) {
+            return; 
+        }
+
+        // NEW: If the candidate has drastically more text than the target, 
+        // it is almost certainly a giant parent wrapper. Penalize its score!
+        if (filter && txt.length > filter.length + 50) {
+            textPenalty = 2;
+        }
       }
+      
       let candidate = seenElements.get(el);
       if (!candidate) {
         const baseScore = scoreCandidate({ el, target });
@@ -81,7 +96,9 @@ function resolveInFrame(frame, target, debug) {
         const inContainer = isInsideContainer(el, containerText);
         candidate.score += inContainer ? 50 : -20; // strong bonus, slight penalty when outside
       }
-      candidate.score += confidence * 2;
+      
+      // Apply the text penalty so wrappers drop below the specific elements
+      candidate.score += (confidence * 2) - textPenalty;
     });
   };
 
@@ -131,7 +148,22 @@ function resolveInFrame(frame, target, debug) {
   }
 
   if (!candidates.length) return null;
-  candidates.sort((a, b) => b.score - a.score);
+  
+  // NEW TIE-BREAKER: Sort by score, but if the scores are tied, the smaller element wins!
+  candidates.sort((a, b) => {
+    const scoreDiff = b.score - a.score;
+    // If scores are within 1 point of each other, break the tie by area
+    if (Math.abs(scoreDiff) < 1.0) {
+      const rA = a.el.getBoundingClientRect();
+      const rB = b.el.getBoundingClientRect();
+      // Fallback to Infinity so 0-size hidden elements are pushed to the bottom
+      const areaA = (rA.width * rA.height) || Infinity;
+      const areaB = (rB.width * rB.height) || Infinity;
+      return areaA - areaB; // Ascending order (smallest area first)
+    }
+    return scoreDiff;
+  });
+  
   const top = candidates[0];
   if (!top || !top.el || top.score < 2) return null;
   return { el: top.el, frame };

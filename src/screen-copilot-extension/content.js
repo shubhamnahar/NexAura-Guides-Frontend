@@ -48,7 +48,56 @@
   window.addEventListener("message", handleOverlayFrameMessage);
   window.addEventListener("message", handleRepairOverlayMessage);
 
+  window.addEventListener("message", handleOverlayFrameMessage);
+  window.addEventListener("message", handleRepairOverlayMessage);
+
+  // --- NEW: EVENT MASKING TO PROTECT SPA DROPDOWNS ---
+  // This stops SPAs (like LinkedIn) from closing dropdowns when you click the extension
+  // --- NEW: EVENT MASKING TO PROTECT SPA DROPDOWNS ---
+  // This stops SPAs (like LinkedIn) from closing dropdowns when you click the extension
+  function blockExtensionFocusLoss(e) {
+    if (!overlayMode && !isRecording && !repairActive) return;
+
+    // 1. Standard Check: Is the focus explicitly targeting our iframes?
+    const isTargetingExtension = 
+      e.target === overlayFrame || e.target === iframe || e.target === repairOverlay;
+      
+    const isRelatedToExtension = 
+      e.relatedTarget === overlayFrame || e.relatedTarget === iframe || e.relatedTarget === repairOverlay;
+
+    // 2. The Browser Security Workaround: 
+    // Browsers often set relatedTarget to 'null' when focusing an iframe.
+    // To catch this, we check if the user's mouse is physically hovering over our UI!
+    const isHoveringExtension = 
+      (overlayFrame && overlayFrame.matches(':hover')) ||
+      (iframe && iframe.matches(':hover')) ||
+      (repairOverlay && repairOverlay.matches(':hover'));
+
+    // If any of these are true, the user is interacting with the Copilot. Kill the event!
+    if (isTargetingExtension || isRelatedToExtension || isHoveringExtension) {
+      e.stopImmediatePropagation();
+    }
+  }
+
+  // We catch ALL focus-related events in the CAPTURE phase (true).
+  // This guarantees we intercept them before React's root listeners even know they happened.
+  window.addEventListener("focusout", blockExtensionFocusLoss, true);
+  window.addEventListener("blur", blockExtensionFocusLoss, true);
+  window.addEventListener("focusin", blockExtensionFocusLoss, true);
+  window.addEventListener("focus", blockExtensionFocusLoss, true);
+  // ---------------------------------------------------
+
+  // We use "true" to catch the event in the CAPTURE phase, 
+  // hitting it before React's root listeners can see it.
+  window.addEventListener("focusout", blockExtensionFocusLoss, true);
+  window.addEventListener("blur", blockExtensionFocusLoss, true);
+  // ---------------------------------------------------
+
+
+  // ... rest of your variables ...
+
   let iframe = null;
+  let isProcessingInteraction = false; // <--- ADD THIS LOCK
   let isRecording = false;
   let currentGuideSteps = [];
   let isProgrammaticallyClicking = false; // kept for possible future auto-actions
@@ -340,7 +389,14 @@
       applyRecordingStateSnapshot(saved);
       if (recoveredPendingStep) {
         if (saved.recording) {
-          currentGuideSteps.push(recoveredPendingStep);
+          // --- NEW: DEDUPLICATE STEPS ON RELOAD ---
+          const alreadyExists = currentGuideSteps.some(
+            (s) => s.createdAt === recoveredPendingStep.createdAt
+          );
+          if (!alreadyExists) {
+            currentGuideSteps.push(recoveredPendingStep);
+          }
+          // ----------------------------------------
           recoveredPendingStep = null;
           await syncSharedState();
         } else {
@@ -561,6 +617,20 @@
   // ---------- recording ----------
   async function handleInteraction(event) {
     if (!isRecording || isProgrammaticallyClicking) return;
+    
+    // --- NEW: UX DOUBLE-CLICK LOCK ---
+    if (isProcessingInteraction) {
+      // If the user clicks again while we are grabbing the screenshot, 
+      // completely block it so it doesn't navigate out of order!
+      if (event.isTrusted) {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+      }
+      return;
+    }
+    // ---------------------------------
+
     if (!event.isTrusted) return;
 
     const target =
@@ -570,212 +640,222 @@
     if (!target) return;
     if (peekHandle && peekHandle.contains(target)) return;
 
-    // Freeze the page immediately so we can persist the step safely.
-    event.preventDefault();
-    event.stopPropagation();
-    event.stopImmediatePropagation();
+    // Activate the lock!
+    isProcessingInteraction = true;
 
-    const actionType = event.type === "submit" ? "submit" : "click";
-    const actionable =
-      actionType === "submit" ? target.closest("form") || target : target;
-    const submitter =
-      actionType === "submit"
-        ? event.submitter ||
-          (target.matches &&
-          target.matches('button[type="submit"],input[type="submit"]')
-            ? target
-            : actionable.querySelector &&
-              actionable.querySelector('button[type="submit"],input[type="submit"]')) ||
-          null
-        : null;
-
-    // Visual feedback to confirm we caught the interaction.
     try {
-      const rect = actionable.getBoundingClientRect();
-      showLiveHighlight(
-        [
-          {
-            x: rect.left,
-            y: rect.top,
-            w: rect.width,
-            h: rect.height,
-            summary: "Recorded step",
-          },
-        ],
-        3000 // Increased duration to ensure it's captured in the screenshot
-      );
-    } catch (err) {
-      console.warn("NexAura: highlight failed", err);
-    }
+      // Freeze the page immediately so we can persist the step safely.
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
 
-    // Give the browser a moment to paint the highlight before capturing the screen
-    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      const actionType = event.type === "submit" ? "submit" : "click";
+      const actionable =
+        actionType === "submit" ? target.closest("form") || target : target;
+      const submitter =
+        actionType === "submit"
+          ? event.submitter ||
+            (target.matches &&
+            target.matches('button[type="submit"],input[type="submit"]')
+              ? target
+              : actionable.querySelector &&
+                actionable.querySelector('button[type="submit"],input[type="submit"]')) ||
+            null
+          : null;
 
-    // Determine input/value semantics.
-    const isInput =
-      (actionable.tagName === "INPUT" &&
-        /text|email|search|password|tel|url/i.test(actionable.type)) ||
-      actionable.tagName === "TEXTAREA";
-    const isContentEditable = actionable.isContentEditable;
-
-    // Capture rich target metadata.
-    let capturedTarget = null;
-    try {
-      const { captureTarget } = await loadModule(
-        "core/recording/captureTarget.js"
-      );
-      capturedTarget = captureTarget(actionable, {
-        id: currentFrameId,
-        href: window.location.href,
-      });
-      // Scale bbox by DPR for correct highlight position
-      if (capturedTarget?.vision?.bbox) {
-        capturedTarget.vision.bbox = scaleBboxByDpr(actionable.getBoundingClientRect());
-      }
-    } catch (e) {
-      console.warn("captureTarget failed", e);
-    }
-
-    const finderLocator =
-      capturedTarget?.preferredLocators?.find(
-        (l) => l?.type === "css" && l.confidence >= 0.75
-      ) || null;
-    const selector = finderLocator?.value || getCssSelector(actionable);
-    if (!selector) {
-      console.warn("NexAura: couldn't generate selector");
-    }
-
-    let action = actionType === "submit" ? "submit" : "click";
-    let value = null;
-    if (action !== "submit") {
-      if (isInput) {
-        action = "type";
-        value = actionable.value || "";
-      } else if (isContentEditable) {
-        action = "type";
-        value = actionable.innerText || "";
-      }
-    }
-
-    const textHint = (actionable.innerText || actionable.textContent || "").trim();
-    const defaultInstruction = textHint
-      ? `Interact: ${textHint.slice(0, 60)}`
-      : "Step recorded";
-    let instruction = defaultInstruction;
-    try {
-      const prompted = prompt("Describe this step:", defaultInstruction);
-      if (prompted && prompted.trim()) {
-        instruction = prompted.trim();
-      }
-    } catch (_) {}
-
-    const finalTarget = capturedTarget ? { ...capturedTarget } : {};
-    finalTarget.innerText = textHint;
-
-    const step = {
-      selector,
-      instruction,
-      action,
-      value,
-      tagName: actionable.tagName ? actionable.tagName.toLowerCase() : null,
-      target: finalTarget,
-      screenshot: null,
-      frameId: currentFrameId,
-      frameHref: window.location.href,
-      createdAt: Date.now(),
-      eventType: actionType,
-    };
-
-    // Persist synchronously so we survive reloads.
-    persistPendingStep(step);
-
-    // Wait for the screenshot (up to 2500ms) before sending to the background
-    try {
-      const screenshot = await captureScreenWithTimeout(2500);
-      if (screenshot) {
-        step.screenshot = screenshot;
-        persistPendingStep(step); // refresh with screenshot
-      }
-    } catch (err) {
-      console.warn("NexAura: screenshot (fast) failed", err);
-    }
-
-    // NOW send to background, ensuring the screenshot is attached if it succeeded
-    const sendToBackground = new Promise((resolve) => {
-      chrome.runtime.sendMessage({ type: "RECORD_STEP", payload: step }, (res) => {
-        if (chrome.runtime.lastError) {
-          console.warn("RECORD_STEP failed:", chrome.runtime.lastError.message);
-          resolve(false);
-          return;
-        }
-        if (res?.ok) {
-          clearPendingStep();
-        }
-        resolve(true);
-      });
-    });
-
-    currentGuideSteps.push(step);
-
-    // We await these so they finish before we trigger the actual click replay
-    await syncSharedState().catch((err) =>
-      console.warn("NexAura: async syncSharedState failed", err)
-    );
-    await sendToBackground;
-
-    // Replay the user's intended action after a short pause.
-    setTimeout(() => {
+      // Visual feedback to confirm we caught the interaction.
       try {
-        isProgrammaticallyClicking = true;
-        if (actionType === "submit") {
-          const form = actionable.closest("form") || actionable;
-          if (form && typeof form.requestSubmit === "function") {
-            form.requestSubmit(submitter || undefined);
-          } else if (form && typeof form.submit === "function") {
-            form.submit();
-          } else if (typeof actionable.submit === "function") {
-            actionable.submit();
-          } else {
-            actionable.click();
-          }
-        } else {
-          const eventInit = {
-            view: window,
-            bubbles: true,
-            cancelable: true,
-            composed: true, // Crucial for Shadow DOMs and React event delegation
-            buttons: (event && event.buttons) || 1,
-            clientX: (event && event.clientX) || 0,
-            clientY: (event && event.clientY) || 0,
-            screenX: (event && event.screenX) || 0,
-            screenY: (event && event.screenY) || 0,
-            ctrlKey: (event && event.ctrlKey) || false,
-            altKey: (event && event.altKey) || false,
-            shiftKey: (event && event.shiftKey) || false,
-            metaKey: (event && event.metaKey) || false
-          };
+        const rect = actionable.getBoundingClientRect();
+        showLiveHighlight(
+          [
+            {
+              x: rect.left,
+              y: rect.top,
+              w: rect.width,
+              h: rect.height,
+              summary: "Recorded step",
+            },
+          ],
+          3000 // Increased duration to ensure it's captured in the screenshot
+        );
+      } catch (err) {
+        console.warn("NexAura: highlight failed", err);
+      }
 
-          // 1. Dispatch a full sequence of events for SPAs like React and for complex players like YouTube
-          actionable.dispatchEvent(new MouseEvent("mousedown", eventInit));
-          actionable.dispatchEvent(new MouseEvent("mouseup", eventInit));
-          actionable.dispatchEvent(new MouseEvent("click", eventInit));
+      // Give the browser a moment to paint the highlight before capturing the screen
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
 
-          // 2. Fallback: If it's an SVG or span inside an <a> tag, and the SPA 
-          // didn't handle the simulated event, force the native behavior
-          const anchor = actionable.closest("a");
-          if (anchor && anchor.href && !anchor.href.startsWith("javascript:") && !anchor.getAttribute('href').startsWith('#')) {
-             // If the click wasn't caught by the SPA router, manually navigate
-             window.location.href = anchor.href;
-          }
+      // Determine input/value semantics.
+      const isInput =
+        (actionable.tagName === "INPUT" &&
+          /text|email|search|password|tel|url/i.test(actionable.type)) ||
+        actionable.tagName === "TEXTAREA";
+      const isContentEditable = actionable.isContentEditable;
+
+      // Capture rich target metadata.
+      let capturedTarget = null;
+      try {
+        const { captureTarget } = await loadModule(
+          "core/recording/captureTarget.js"
+        );
+        capturedTarget = captureTarget(actionable, {
+          id: currentFrameId,
+          href: window.location.href,
+        });
+        // Scale bbox by DPR for correct highlight position
+        if (capturedTarget?.vision?.bbox) {
+          capturedTarget.vision.bbox = scaleBboxByDpr(actionable.getBoundingClientRect());
+        }
+      } catch (e) {
+        console.warn("captureTarget failed", e);
+      }
+
+      const finderLocator =
+        capturedTarget?.preferredLocators?.find(
+          (l) => l?.type === "css" && l.confidence >= 0.75
+        ) || null;
+      const selector = finderLocator?.value || getCssSelector(actionable);
+      if (!selector) {
+        console.warn("NexAura: couldn't generate selector");
+      }
+
+      let action = actionType === "submit" ? "submit" : "click";
+      let value = null;
+      if (action !== "submit") {
+        if (isInput) {
+          action = "type";
+          value = actionable.value || "";
+        } else if (isContentEditable) {
+          action = "type";
+          value = actionable.innerText || "";
+        }
+      }
+
+      const textHint = (actionable.innerText || actionable.textContent || "").trim();
+      const defaultInstruction = textHint
+        ? `Interact: ${textHint.slice(0, 60)}`
+        : "Step recorded";
+      let instruction = defaultInstruction;
+      try {
+        const prompted = prompt("Describe this step:", defaultInstruction);
+        if (prompted && prompted.trim()) {
+          instruction = prompted.trim();
+        }
+      } catch (_) {}
+
+      const finalTarget = capturedTarget ? { ...capturedTarget } : {};
+      finalTarget.innerText = textHint;
+
+      const step = {
+        selector,
+        instruction,
+        action,
+        value,
+        tagName: actionable.tagName ? actionable.tagName.toLowerCase() : null,
+        target: finalTarget,
+        screenshot: null,
+        frameId: currentFrameId,
+        frameHref: window.location.href,
+        createdAt: Date.now(),
+        eventType: actionType,
+      };
+
+      // Persist synchronously so we survive reloads.
+      persistPendingStep(step);
+
+      // Wait for the screenshot (up to 2500ms) before sending to the background
+      try {
+        const screenshot = await captureScreenWithTimeout(2500);
+        if (screenshot) {
+          step.screenshot = screenshot;
+          persistPendingStep(step); // refresh with screenshot
         }
       } catch (err) {
-        console.warn("NexAura: replay failed", err);
-      } finally {
-        setTimeout(() => {
-          isProgrammaticallyClicking = false;
-        }, 0);
+        console.warn("NexAura: screenshot (fast) failed", err);
       }
-    }, REPLAY_DELAY_MS);
+
+      // NOW send to background, ensuring the screenshot is attached if it succeeded
+      const sendToBackground = new Promise((resolve) => {
+        chrome.runtime.sendMessage({ type: "RECORD_STEP", payload: step }, (res) => {
+          if (chrome.runtime.lastError) {
+            console.warn("RECORD_STEP failed:", chrome.runtime.lastError.message);
+            resolve(false);
+            return;
+          }
+          if (res?.ok) {
+            clearPendingStep();
+          }
+          resolve(true);
+        });
+      });
+
+      currentGuideSteps.push(step);
+
+      // We await these so they finish before we trigger the actual click replay
+      await syncSharedState().catch((err) =>
+        console.warn("NexAura: async syncSharedState failed", err)
+      );
+      await sendToBackground;
+
+      // Replay the user's intended action after a short pause.
+      setTimeout(() => {
+        try {
+          isProgrammaticallyClicking = true;
+          if (actionType === "submit") {
+            const form = actionable.closest("form") || actionable;
+            if (form && typeof form.requestSubmit === "function") {
+              form.requestSubmit(submitter || undefined);
+            } else if (form && typeof form.submit === "function") {
+              form.submit();
+            } else if (typeof actionable.submit === "function") {
+              actionable.submit();
+            } else {
+              actionable.click();
+            }
+          } else {
+            const eventInit = {
+              view: window,
+              bubbles: true,
+              cancelable: true,
+              composed: true, // Crucial for Shadow DOMs and React event delegation
+              buttons: (event && event.buttons) || 1,
+              clientX: (event && event.clientX) || 0,
+              clientY: (event && event.clientY) || 0,
+              screenX: (event && event.screenX) || 0,
+              screenY: (event && event.screenY) || 0,
+              ctrlKey: (event && event.ctrlKey) || false,
+              altKey: (event && event.altKey) || false,
+              shiftKey: (event && event.shiftKey) || false,
+              metaKey: (event && event.metaKey) || false
+            };
+
+            // 1. Dispatch a full sequence of events for SPAs like React and for complex players like YouTube
+            actionable.dispatchEvent(new MouseEvent("mousedown", eventInit));
+            actionable.dispatchEvent(new MouseEvent("mouseup", eventInit));
+            actionable.dispatchEvent(new MouseEvent("click", eventInit));
+
+            // 2. Fallback: If it's an SVG or span inside an <a> tag, and the SPA 
+            // didn't handle the simulated event, force the native behavior
+            const anchor = actionable.closest("a");
+            if (anchor && anchor.href && !anchor.href.startsWith("javascript:") && !anchor.getAttribute('href').startsWith('#')) {
+               // If the click wasn't caught by the SPA router, manually navigate
+               window.location.href = anchor.href;
+            }
+          }
+        } catch (err) {
+          console.warn("NexAura: replay failed", err);
+        } finally {
+          setTimeout(() => {
+            isProgrammaticallyClicking = false;
+            isProcessingInteraction = false; // <--- RELEASE THE LOCK ON SUCCESS
+          }, 0);
+        }
+      }, REPLAY_DELAY_MS);
+      
+    } catch (err) {
+      console.error("NexAura: Error processing interaction", err);
+      isProcessingInteraction = false; // <--- RELEASE THE LOCK ON ERROR
+    }
   }
 
   function attachRecordingHooks() {

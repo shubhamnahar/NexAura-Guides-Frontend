@@ -74,9 +74,23 @@ const MyGuides = () => {
     }
   };
 
+  const buildPdfName = (guide) => {
+    const fallback = `guide_${guide?.id ?? 'download'}`;
+    const raw = (guide?.name || fallback).trim();
+    const underscored = raw.replace(/\s+/g, '_');
+    const safe = underscored.replace(/[^A-Za-z0-9._-]/g, '') || fallback;
+    return `${safe}.pdf`;
+  };
+
   // Download a guide as PDF
-  const handleDownloadGuide = async (guideId) => {
+  const handleDownloadGuide = async (guide) => {
     setError('');
+
+    const guideId = guide?.id;
+    if (!guideId) {
+      setError('Missing guide id for download.');
+      return;
+    }
 
     try {
       const response = await fetch(
@@ -101,7 +115,7 @@ const MyGuides = () => {
 
       const a = document.createElement('a');
       a.href = url;
-      a.download = `guide-${guideId}.pdf`;
+      a.download = buildPdfName(guide);
       document.body.appendChild(a);
       a.click();
       a.remove();

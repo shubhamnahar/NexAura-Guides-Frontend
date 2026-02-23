@@ -68,7 +68,7 @@ function LandingPage() {
               <video
                 className="hero-video"
                 ref={videoRef}
-                src="/NexAura_Browser_Extension_Demo.mp4"
+              src="/Video_Generation_With_User_Feedback.mp4"
                 autoPlay
                 muted
                 loop

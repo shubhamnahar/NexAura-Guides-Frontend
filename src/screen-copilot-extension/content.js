@@ -638,6 +638,8 @@
         ? event.target
         : event.target?.parentElement || null;
     if (!target) return;
+    // Ignore clicks inside our prompt overlay
+    if (target.closest && target.closest('.nex-prompt-overlay')) return;
     if (peekHandle && peekHandle.contains(target)) return;
 
     // Activate the lock!

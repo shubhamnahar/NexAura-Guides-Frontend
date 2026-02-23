@@ -6,6 +6,7 @@
     padding: 24px;
     transition: transform 0.2s ease, box-shadow 0.2s ease;
     cursor: pointer; /* <-- 1. Add pointer cursor */
+    position: relative;
   }
   
   .guide-card:hover {
@@ -94,7 +95,8 @@
   }
   
   .guide-card-expand-btn,
-  .guide-card-delete-btn {
+  .guide-card-delete-btn,
+  .guide-card-download-btn {
     border: none;
     padding: 8px 14px;
     font-size: 14px;
@@ -118,10 +120,100 @@
     color: var(--brand-red);
     border: 1px solid var(--brand-red);
     margin-left: auto; /* Pushes it to the right */
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    border-radius: 50%;
+    transition: transform 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
   }
   
   .guide-card-delete-btn:hover {
-    background-color: rgba(217, 59, 59, 0.1);
-    color: #ff8a8a;
+    background-color: rgba(217, 59, 59, 0.12);
+    color: #ffb0b0;
     border-color: #ff8a8a;
+    transform: translateY(-1px) scale(1.05);
+    box-shadow: 0 6px 18px rgba(217, 59, 59, 0.25);
+  }
+
+  .guide-card-delete-btn:active {
+    transform: scale(0.95);
+  }
+
+  .delete-icon {
+    width: 20px;
+    height: 20px;
+    pointer-events: none;
+  }
+
+  /* Confirm dialog */
+  .guide-card-confirm {
+    position: absolute;
+    bottom: 16px;
+    right: 16px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 14px;
+    box-shadow: 0 16px 35px rgba(0, 0, 0, 0.35);
+    animation: confirm-pop 160ms ease-out;
+    z-index: 2;
+    min-width: 220px;
+  }
+
+  @keyframes confirm-pop {
+    from {
+      opacity: 0;
+      transform: translateY(6px) scale(0.97);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
+  .guide-card-confirm .confirm-body {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    color: var(--text-primary);
+    font-size: 14px;
+  }
+
+  .guide-card-confirm .confirm-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+  }
+
+  .confirm-cancel,
+  .confirm-delete {
+    border: none;
+    padding: 8px 12px;
+    font-size: 13px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: transform 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
+  }
+
+  .confirm-cancel {
+    background: var(--bg-light);
+    color: var(--text-primary);
+  }
+
+  .confirm-cancel:hover {
+    background: #3c3c3c;
+  }
+
+  .confirm-delete {
+    background: linear-gradient(135deg, #d93b3b 0%, #e87c32 100%);
+    color: #fff;
+    box-shadow: 0 6px 18px rgba(232, 124, 50, 0.35);
+  }
+
+  .confirm-delete:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 10px 24px rgba(232, 124, 50, 0.45);
   }

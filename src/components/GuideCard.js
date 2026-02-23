@@ -18,18 +18,12 @@ const GuideCard = ({
   onDownload,
 }) => {
   const [isExpanded, setIsExpanded] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   const handleDeleteClick = (e) => {
     e.stopPropagation();
     if (!onDelete) return;
-
-    if (
-      window.confirm(
-        `Are you sure you want to delete the guide "${guide.name}"?`
-      )
-    ) {
-      onDelete(guide.id);
-    }
+    setConfirmOpen(true);
   };
 
   const handleDownloadClick = (e) => {
@@ -84,9 +78,20 @@ const GuideCard = ({
           {showDelete && (
             <button
               className="guide-card-delete-btn"
+              aria-label={`Delete ${guide.name}`}
               onClick={handleDeleteClick}
             >
-              Delete
+              <svg
+                className="delete-icon"
+                viewBox="0 0 24 24"
+                role="img"
+                aria-hidden="true"
+              >
+                <path
+                  d="M9 3h6a1 1 0 0 1 1 1v2h4v2h-1v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8H3V6h4V4a1 1 0 0 1 1-1Zm6 2H9v1h6V5ZM7 8v11h10V8H7Zm3 2h2v7h-2v-7Z"
+                  fill="currentColor"
+                />
+              </svg>
             </button>
           )}
         </div>
@@ -100,6 +105,37 @@ const GuideCard = ({
               <li key={index}>{step.instruction}</li>
             ))}
           </ol>
+        </div>
+      )}
+
+      {confirmOpen && (
+        <div className="guide-card-confirm" role="dialog" aria-modal="true">
+          <div className="confirm-body">
+            <p>
+              Delete “<strong>{guide.name}</strong>”?
+            </p>
+            <div className="confirm-actions">
+              <button
+                className="confirm-cancel"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setConfirmOpen(false);
+                }}
+              >
+                Keep it
+              </button>
+              <button
+                className="confirm-delete"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setConfirmOpen(false);
+                  onDelete && onDelete(guide.id);
+                }}
+              >
+                Delete
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

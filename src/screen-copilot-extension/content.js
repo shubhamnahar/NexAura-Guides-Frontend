@@ -358,10 +358,10 @@
 
     Object.assign(iframe.style, {
       position: "fixed",
-      top: "0",
+      top: "10vh",
       right: "0",
-      width: "400px",
-      height: "100vh",
+      width: "320px",
+      height: "80vh",
       border: "none",
       background: "transparent",
       zIndex: "2147483647",
@@ -732,16 +732,19 @@
       }
 
       const textHint = (actionable.innerText || actionable.textContent || "").trim();
-      const defaultInstruction = textHint
-        ? `Interact: ${textHint.slice(0, 60)}`
-        : "Step recorded";
-      let instruction = defaultInstruction;
-      try {
-        const prompted = prompt("Describe this step:", defaultInstruction);
-        if (prompted && prompted.trim()) {
-          instruction = prompted.trim();
-        }
-      } catch (_) {}
+    const defaultInstruction = textHint
+      ? `Interact: ${textHint.slice(0, 60)}`
+      : "Step recorded";
+    let instruction = await showNicePrompt({
+      title: "Describe this step",
+      placeholder: defaultInstruction,
+      defaultValue: defaultInstruction,
+      confirmLabel: "Save step",
+      cancelLabel: "Skip",
+    });
+    if (!instruction) {
+      instruction = defaultInstruction;
+    }
 
       const finalTarget = capturedTarget ? { ...capturedTarget } : {};
       finalTarget.innerText = textHint;
@@ -1532,6 +1535,208 @@
     };
   }
 
+  // Overlay drag support
+  let overlayDrag = null;
+  function beginOverlayDrag(payload) {
+    if (!overlayFrame) return;
+    const rect = overlayFrame.getBoundingClientRect();
+    overlayDrag = {
+      startScreenX: payload?.screenX || 0,
+      startScreenY: payload?.screenY || 0,
+      startLeft: rect.left,
+      startTop: rect.top,
+    };
+
+    overlayFrame.style.right = "auto";
+    overlayFrame.style.bottom = "auto";
+    overlayFrame.style.left = `${rect.left}px`;
+    overlayFrame.style.top = `${rect.top}px`;
+    overlayFrame.style.transition = "none";
+  }
+
+  function updateOverlayDrag(payload) {
+    if (!overlayDrag || !overlayFrame) return;
+    const dx = (payload?.screenX || 0) - overlayDrag.startScreenX;
+    const dy = (payload?.screenY || 0) - overlayDrag.startScreenY;
+    const w = overlayFrame.getBoundingClientRect().width;
+    const h = overlayFrame.getBoundingClientRect().height;
+    const maxX = window.innerWidth - w - 8;
+    const maxY = window.innerHeight - h - 8;
+    const nextX = Math.min(Math.max(8, overlayDrag.startLeft + dx), maxX);
+    const nextY = Math.min(Math.max(8, overlayDrag.startTop + dy), maxY);
+    overlayFrame.style.left = `${nextX}px`;
+    overlayFrame.style.top = `${nextY}px`;
+  }
+
+  function endOverlayDrag() {
+    overlayDrag = null;
+    if (overlayFrame) {
+      overlayFrame.style.transition = "box-shadow 0.2s ease";
+    }
+  }
+
+  function updateOverlayDrag(payload) {
+    if (!overlayDrag || !overlayFrame) return;
+    const dx = (payload?.screenX || 0) - overlayDrag.startScreenX;
+    const dy = (payload?.screenY || 0) - overlayDrag.startScreenY;
+    const w = overlayFrame.getBoundingClientRect().width;
+    const h = overlayFrame.getBoundingClientRect().height;
+    const maxX = window.innerWidth - w - 8;
+    const maxY = window.innerHeight - h - 8;
+    const nextX = Math.min(Math.max(8, overlayDrag.startLeft + dx), maxX);
+    const nextY = Math.min(Math.max(8, overlayDrag.startTop + dy), maxY);
+    overlayFrame.style.left = `${nextX}px`;
+    overlayFrame.style.top = `${nextY}px`;
+  }
+
+  function endOverlayDrag() {
+    overlayDrag = null;
+    if (overlayFrame) {
+      overlayFrame.style.transition = "box-shadow 0.2s ease";
+    }
+  }
+
+  // ---------- nice prompt (non-blocking) ----------
+  function showNicePrompt({
+    title = "Enter text",
+    placeholder = "",
+    defaultValue = "",
+    confirmLabel = "Save",
+    cancelLabel = "Cancel",
+  } = {}) {
+    return new Promise((resolve) => {
+      // If document not ready, fallback to native prompt
+      if (!document.body) {
+        const p = prompt(title, defaultValue || placeholder || "");
+        resolve(p && p.trim() ? p.trim() : null);
+        return;
+      }
+
+      const overlay = document.createElement("div");
+      overlay.className = "nex-prompt-overlay";
+      Object.assign(overlay.style, {
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0,0,0,0.45)",
+        backdropFilter: "blur(6px)",
+        zIndex: 2147483645,
+        display: "grid",
+        placeItems: "center",
+      });
+
+      const box = document.createElement("div");
+      Object.assign(box.style, {
+        width: "min(420px, 92vw)",
+        background: "#101018",
+        border: "1px solid rgba(255,255,255,0.08)",
+        borderRadius: "16px",
+        padding: "18px 18px 14px",
+        boxShadow: "0 24px 60px rgba(0,0,0,0.45)",
+        color: "#f5f5f5",
+        fontFamily:
+          'Inter, "Segoe UI", -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif',
+      });
+
+      const h = document.createElement("div");
+      h.textContent = title;
+      Object.assign(h.style, {
+        fontSize: "16px",
+        fontWeight: "700",
+        marginBottom: "8px",
+      });
+
+      const input = document.createElement("input");
+      input.type = "text";
+      input.placeholder = placeholder || "";
+      input.value = defaultValue || "";
+      Object.assign(input.style, {
+        width: "100%",
+        padding: "12px 12px",
+        borderRadius: "10px",
+        border: "1px solid #2f2f3b",
+        background: "#151522",
+        color: "#fff",
+        fontSize: "14px",
+        outline: "none",
+      });
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          finish(input.value);
+        }
+        if (e.key === "Escape") {
+          e.preventDefault();
+          cleanup(null);
+        }
+      });
+
+      const buttons = document.createElement("div");
+      Object.assign(buttons.style, {
+        display: "flex",
+        gap: "10px",
+        justifyContent: "flex-end",
+        marginTop: "14px",
+      });
+
+      const cancelBtn = document.createElement("button");
+      cancelBtn.textContent = cancelLabel;
+      Object.assign(cancelBtn.style, {
+        padding: "10px 14px",
+        borderRadius: "10px",
+        border: "1px solid #2f2f3b",
+        background: "#1b1b28",
+        color: "#e0e0e0",
+        cursor: "pointer",
+      });
+      cancelBtn.onclick = () => cleanup(null);
+
+      const saveBtn = document.createElement("button");
+      saveBtn.textContent = confirmLabel;
+      Object.assign(saveBtn.style, {
+        padding: "10px 16px",
+        borderRadius: "10px",
+        border: "none",
+        background: "linear-gradient(135deg,#D93B3B 0%,#E87C32 100%)",
+        color: "#fff",
+        fontWeight: "700",
+        cursor: "pointer",
+        boxShadow: "0 10px 24px rgba(232,124,50,0.35)",
+      });
+      saveBtn.onclick = () => finish(input.value);
+
+      buttons.appendChild(cancelBtn);
+      buttons.appendChild(saveBtn);
+
+      box.appendChild(h);
+      box.appendChild(input);
+      box.appendChild(buttons);
+      overlay.appendChild(box);
+      document.body.appendChild(overlay);
+
+      // slight scale animation
+      box.animate(
+        [
+          { opacity: 0, transform: "translateY(6px) scale(0.97)" },
+          { opacity: 1, transform: "translateY(0) scale(1)" },
+        ],
+        { duration: 140, easing: "ease-out" }
+      );
+
+      input.focus();
+      input.select();
+
+      function finish(val) {
+        const trimmed = val && val.trim() ? val.trim() : null;
+        cleanup(trimmed);
+      }
+
+      function cleanup(result) {
+        overlay.remove();
+        resolve(result);
+      }
+    });
+  }
+
   function ensureOverlayFrame() {
     if (!isTopFrame) return null;
     if (!document.body) {
@@ -1575,6 +1780,19 @@
     if (!overlayFrame || event.source !== overlayFrame.contentWindow) return;
     const data = event.data || {};
     const { type, payload } = data;
+
+    if (type === "NEXAURA_OVERLAY_DRAG_START") {
+      beginOverlayDrag(payload);
+      return;
+    }
+    if (type === "NEXAURA_OVERLAY_DRAG_MOVE") {
+      updateOverlayDrag(payload);
+      return;
+    }
+    if (type === "NEXAURA_OVERLAY_DRAG_END") {
+      endOverlayDrag();
+      return;
+    }
 
     if (type === "NEXAURA_OVERLAY_READY") {
       overlayFrameReady = true;

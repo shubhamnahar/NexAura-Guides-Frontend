@@ -1,5 +1,5 @@
 (function () {
-  let titleEl, bodyEl, primaryBtn, secondaryBtn, buttonsWrapper;
+  let titleEl, bodyEl, primaryBtn, secondaryBtn, buttonsWrapper, dragHandle;
   let currentState = {
     title: "",
     body: "",
@@ -57,6 +57,7 @@
     primaryBtn = document.getElementById("primaryBtn");
     secondaryBtn = document.getElementById("secondaryBtn");
     buttonsWrapper = document.getElementById("buttons");
+    dragHandle = document.getElementById("dragHandle");
 
     primaryBtn.addEventListener("click", () => {
       sendMessage("NEXAURA_OVERLAY_PRIMARY");
@@ -64,6 +65,38 @@
     secondaryBtn.addEventListener("click", () => {
       sendMessage("NEXAURA_OVERLAY_SECONDARY");
     });
+    if (dragHandle) {
+      let dragging = false;
+      const onMove = (e) => {
+        if (!dragging) return;
+        sendMessage("NEXAURA_OVERLAY_DRAG_MOVE", {
+          screenX: e.screenX,
+          screenY: e.screenY,
+        });
+      };
+      const endDrag = (e) => {
+        if (!dragging) return;
+        dragging = false;
+        sendMessage("NEXAURA_OVERLAY_DRAG_END", {
+          screenX: e?.screenX,
+          screenY: e?.screenY,
+        });
+        window.removeEventListener("pointermove", onMove, true);
+        window.removeEventListener("pointerup", endDrag, true);
+        window.removeEventListener("pointercancel", endDrag, true);
+      };
+      dragHandle.addEventListener("pointerdown", (e) => {
+        e.preventDefault();
+        dragging = true;
+        sendMessage("NEXAURA_OVERLAY_DRAG_START", {
+          screenX: e.screenX,
+          screenY: e.screenY,
+        });
+        window.addEventListener("pointermove", onMove, true);
+        window.addEventListener("pointerup", endDrag, true);
+        window.addEventListener("pointercancel", endDrag, true);
+      });
+    }
 
     render();
     sendMessage("NEXAURA_OVERLAY_READY");

@@ -3,7 +3,7 @@
  *  Completely isolated from webpage DOM
  ***************************************************/
 
-// Helpers to talk to content.js
+  // Helpers to talk to content.js
 async function getActiveTabId() {
     const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
     return tabs[0]?.id;
@@ -154,17 +154,26 @@ async function getActiveTabId() {
         `Recorded <strong>${safeSteps.length}</strong> steps. Let's save this as a guide.`
       );
 
-      const name = prompt("Name this guide", "My Guide");
+      const name = await nicePrompt({
+        title: "Name this guide",
+        placeholder: "My Guide",
+        defaultValue: "My Guide",
+      });
       if (!name) {
         addMessage("bot", "❎ Cancelled saving guide.");
         await sendToContent({ type: "CONSUME_PENDING_RECORDING" });
         return;
       }
-      const shortcut = prompt(
-        "Shortcut (e.g. /my-guide)",
-        `/${name.toLowerCase().replace(/\s+/g, "-")}`
-      );
-      const desc = prompt("Short description", "");
+      const shortcut = await nicePrompt({
+        title: "Shortcut (e.g. /my-guide)",
+        placeholder: `/${name.toLowerCase().replace(/\\s+/g, "-")}`,
+        defaultValue: `/${name.toLowerCase().replace(/\\s+/g, "-")}`,
+      });
+      const desc = await nicePrompt({
+        title: "Short description",
+        placeholder: "What does this guide do?",
+        defaultValue: "",
+      });
 
       const safeShortcut =
         shortcut && shortcut.trim()
@@ -236,6 +245,139 @@ async function getActiveTabId() {
           '"': "&quot;",
           "'": "&#39;",
         }[m];
+      });
+    }
+
+    // Lightweight modal prompt for panel iframe
+    function nicePrompt({
+      title = "Enter text",
+      placeholder = "",
+      defaultValue = "",
+      confirmLabel = "Save",
+      cancelLabel = "Cancel",
+    } = {}) {
+      return new Promise((resolve) => {
+        const overlay = document.createElement("div");
+        Object.assign(overlay.style, {
+          position: "fixed",
+          inset: 0,
+          background: "rgba(0,0,0,0.55)",
+          backdropFilter: "blur(8px)",
+          display: "grid",
+          placeItems: "center",
+          zIndex: 9999,
+        });
+
+        const box = document.createElement("div");
+        Object.assign(box.style, {
+          width: "min(420px, 92vw)",
+          background: "#101018",
+          border: "1px solid rgba(255,255,255,0.08)",
+          borderRadius: "16px",
+          padding: "18px 18px 14px",
+          boxShadow: "0 24px 60px rgba(0,0,0,0.45)",
+          color: "#f5f5f5",
+          fontFamily:
+            'Inter, "Segoe UI", -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif',
+        });
+
+        const h = document.createElement("div");
+        h.textContent = title;
+        Object.assign(h.style, {
+          fontSize: "16px",
+          fontWeight: "700",
+          marginBottom: "8px",
+        });
+
+        const input = document.createElement("input");
+        input.type = "text";
+        input.placeholder = placeholder || "";
+        input.value = defaultValue || "";
+        Object.assign(input.style, {
+          width: "100%",
+          padding: "12px 12px",
+          borderRadius: "10px",
+          border: "1px solid #2f2f3b",
+          background: "#151522",
+          color: "#fff",
+          fontSize: "14px",
+          outline: "none",
+        });
+
+        input.addEventListener("keydown", (e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            finish(input.value);
+          }
+          if (e.key === "Escape") {
+            e.preventDefault();
+            cleanup(null);
+          }
+        });
+
+        const buttons = document.createElement("div");
+        Object.assign(buttons.style, {
+          display: "flex",
+          gap: "10px",
+          justifyContent: "flex-end",
+          marginTop: "14px",
+        });
+
+        const cancelBtn = document.createElement("button");
+        cancelBtn.textContent = cancelLabel;
+        Object.assign(cancelBtn.style, {
+          padding: "10px 14px",
+          borderRadius: "10px",
+          border: "1px solid #2f2f3b",
+          background: "#1b1b28",
+          color: "#e0e0e0",
+          cursor: "pointer",
+        });
+        cancelBtn.onclick = () => cleanup(null);
+
+        const saveBtn = document.createElement("button");
+        saveBtn.textContent = confirmLabel;
+        Object.assign(saveBtn.style, {
+          padding: "10px 16px",
+          borderRadius: "10px",
+          border: "none",
+          background: "linear-gradient(135deg,#D93B3B 0%,#E87C32 100%)",
+          color: "#fff",
+          fontWeight: "700",
+          cursor: "pointer",
+          boxShadow: "0 10px 24px rgba(232,124,50,0.35)",
+        });
+        saveBtn.onclick = () => finish(input.value);
+
+        buttons.appendChild(cancelBtn);
+        buttons.appendChild(saveBtn);
+
+        box.appendChild(h);
+        box.appendChild(input);
+        box.appendChild(buttons);
+        overlay.appendChild(box);
+        document.body.appendChild(overlay);
+
+        box.animate(
+          [
+            { opacity: 0, transform: "translateY(6px) scale(0.97)" },
+            { opacity: 1, transform: "translateY(0) scale(1)" },
+          ],
+          { duration: 140, easing: "ease-out" }
+        );
+
+        input.focus();
+        input.select();
+
+        function finish(val) {
+          const trimmed = val && val.trim() ? val.trim() : null;
+          cleanup(trimmed);
+        }
+
+        function cleanup(result) {
+          overlay.remove();
+          resolve(result);
+        }
       });
     }
   

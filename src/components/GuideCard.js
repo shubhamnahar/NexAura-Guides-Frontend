@@ -19,6 +19,24 @@ const GuideCard = ({
 }) => {
   const [isExpanded, setIsExpanded] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [toastVisible, setToastVisible] = useState(false);
+
+  const copyShortcut = async (e) => {
+    e.stopPropagation();
+    if (!guide?.shortcut) return;
+    try {
+      await navigator.clipboard.writeText(guide.shortcut);
+      setCopied(true);
+      setToastVisible(true);
+      setTimeout(() => {
+        setCopied(false);
+        setToastVisible(false);
+      }, 1400);
+    } catch (err) {
+      console.warn('Clipboard copy failed', err);
+    }
+  };
 
   const handleDeleteClick = (e) => {
     e.stopPropagation();
@@ -46,7 +64,14 @@ const GuideCard = ({
       style={{ cursor: hasActions ? 'default' : 'pointer' }}
     >
       <h3 className="guide-card-title">{guide.name}</h3>
-      <p className="guide-card-shortcut">{guide.shortcut}</p>
+      <p
+        className="guide-card-shortcut"
+        onClick={copyShortcut}
+        title="Click to copy shortcut"
+      >
+        {guide.shortcut}
+        {copied && <span className="copied-dot" aria-label="Copied">•</span>}
+      </p>
       <p className="guide-card-description">{guide.description}</p>
       <span className="guide-card-steps">
         {guide.steps.length}{' '}
@@ -136,6 +161,12 @@ const GuideCard = ({
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {toastVisible && (
+        <div className="copy-toast" role="status" aria-live="polite">
+          Guide shortcut copied
         </div>
       )}
     </div>

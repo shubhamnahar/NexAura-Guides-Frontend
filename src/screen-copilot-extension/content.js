@@ -1333,13 +1333,14 @@
     );
     const token = tokenObj?.nexaura_token;
     if (!token) throw new Error("No token. Please log in.");
+    
     const cachePayload = {};
     (guide.steps || []).forEach((s, idx) => {
       if (s.screenshot) {
         cachePayload[idx + 1] = s.screenshot;
       }
     });
-    // convert to backend shape
+
     const payload = {
       name: guide.name,
       shortcut: guide.shortcut,
@@ -1352,6 +1353,7 @@
         screenshot: s.screenshot || null,
       })),
     };
+
     const res = await fetch("http://127.0.0.1:8000/api/guides/", {
       method: "POST",
       headers: {
@@ -1360,14 +1362,20 @@
       },
       body: JSON.stringify(payload),
     });
+
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: "unknown" }));
       throw new Error(err.detail || "Failed to save guide");
     }
+    
     const saved = await res.json();
-    if (saved?.id && Object.keys(cachePayload).length) {
-      await writeScreenshotCache(saved.id, cachePayload);
-    }
+    
+    // --- NEW: GARBAGE COLLECTION ---
+    // Instead of saving these massive images permanently, we 
+    // clear the temporary recording storage to free up the browser's RAM!
+    await clearRecordingStateStorage();
+    // -------------------------------
+    
     return saved;
   }
 

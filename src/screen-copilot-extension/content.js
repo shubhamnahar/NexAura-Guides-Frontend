@@ -138,6 +138,7 @@
   let restoreRecordingPromise = null;
   const moduleCache = {};
   const readyPromise = initializeRecorderContext();
+  let overlayDrag = null;
 
   // Recover any step that was synchronously persisted before the previous page unload.
   (function recoverPendingStep() {
@@ -1190,7 +1191,7 @@
     playbackGuide = normalized || guide;
     currentStepIndex = 0;
     lastHighlightedStepIndex = null;
-    stepInteractionCompleted = true;
+    stepInteractionCompleted = true; // RESET THE LOCK
     await syncSharedState();
     // Panel / overlay will call EXECUTE_NEXT_PLAYBACK_STEP manually
     return { ok: true };
@@ -1200,7 +1201,7 @@
     playbackGuide = null;
     currentStepIndex = 0;
     lastHighlightedStepIndex = null;
-    stepInteractionCompleted = true;
+    stepInteractionCompleted = true; // RESET THE LOCK
     showLiveHighlight([]);
     await syncSharedState();
   }
@@ -1583,13 +1584,7 @@
   function ensureOverlayFrame() {
     if (!isTopFrame) return null;
     if (!document.body) {
-      window.addEventListener(
-        "DOMContentLoaded",
-        () => {
-          ensureOverlayFrame();
-        },
-        { once: true }
-      );
+      window.addEventListener("DOMContentLoaded", () => { ensureOverlayFrame(); }, { once: true });
       return null;
     }
     if (overlayFrame && overlayFrame.isConnected) return overlayFrame;
@@ -1598,9 +1593,11 @@
     overlayFrame.id = "nexaura-overlay-frame";
     Object.assign(overlayFrame.style, {
       position: "fixed",
-      bottom: "20px",
-      right: "20px",
-      width: "260px",
+      bottom: "24px",                  // Lifted slightly
+      left: "50%",                     // Move to horizontal center
+      transform: "translateX(-50%)",   // Perfect mathematical centering
+      right: "auto",                   // Clear right-alignment
+      width: "280px",                  
       height: "150px",
       border: "none",
       borderRadius: "16px",
@@ -1619,10 +1616,71 @@
     return overlayFrame;
   }
 
+  // ---------- overlay drag support ----------
+  function beginOverlayDrag(payload) {
+    if (!overlayFrame) return;
+    const rect = overlayFrame.getBoundingClientRect();
+    overlayDrag = {
+      startScreenX: payload?.screenX || 0,
+      startScreenY: payload?.screenY || 0,
+      startLeft: rect.left,
+      startTop: rect.top,
+    };
+
+    overlayFrame.style.right = "auto";
+    overlayFrame.style.bottom = "auto";
+    
+    // Remove the centering transform so the drag math uses raw coordinates!
+    overlayFrame.style.transform = "none"; 
+
+    overlayFrame.style.left = `${rect.left}px`;
+    overlayFrame.style.top = `${rect.top}px`;
+    overlayFrame.style.transition = "none";
+  }
+
+  function updateOverlayDrag(payload) {
+    if (!overlayDrag || !overlayFrame) return;
+    const dx = (payload?.screenX || 0) - overlayDrag.startScreenX;
+    const dy = (payload?.screenY || 0) - overlayDrag.startScreenY;
+    const w = overlayFrame.getBoundingClientRect().width;
+    const h = overlayFrame.getBoundingClientRect().height;
+    
+    // Keep it on screen
+    const maxX = window.innerWidth - w - 8;
+    const maxY = window.innerHeight - h - 8;
+    const nextX = Math.min(Math.max(8, overlayDrag.startLeft + dx), maxX);
+    const nextY = Math.min(Math.max(8, overlayDrag.startTop + dy), maxY);
+    
+    overlayFrame.style.left = `${nextX}px`;
+    overlayFrame.style.top = `${nextY}px`;
+  }
+
+  function endOverlayDrag() {
+    overlayDrag = null;
+    if (overlayFrame) {
+      overlayFrame.style.transition = "box-shadow 0.2s ease";
+    }
+  }
+
   function handleOverlayFrameMessage(event) {
     if (!overlayFrame || event.source !== overlayFrame.contentWindow) return;
     const data = event.data || {};
     const { type, payload } = data;
+
+    // --- NEW: CATCH DRAG EVENTS ---
+    if (type === "NEXAURA_OVERLAY_DRAG_START") {
+      beginOverlayDrag(payload);
+      return;
+    }
+    if (type === "NEXAURA_OVERLAY_DRAG_MOVE") {
+      updateOverlayDrag(payload);
+      return;
+    }
+    if (type === "NEXAURA_OVERLAY_DRAG_END") {
+      endOverlayDrag();
+      return;
+    }
+    // ------------------------------
 
     if (type === "NEXAURA_OVERLAY_READY") {
       overlayFrameReady = true;
@@ -1653,7 +1711,8 @@
 
     if (type === "NEXAURA_OVERLAY_HEIGHT") {
       const rawHeight = payload?.height || 0;
-      const clamped = Math.min(Math.max(rawHeight, 120), 280);
+      // INCREASED MAX HEIGHT: Changed 280 to 340 so long text doesn't hide buttons
+      const clamped = Math.min(Math.max(rawHeight, 120), 340);
       overlayFrame.style.height = `${clamped}px`;
     }
   }
@@ -1905,13 +1964,12 @@
     const isLastHighlighted =
       hasActiveStep && displayIndex === steps.length - 1;
 
-    // --- UPDATED: BULLETPROOF LOCK LOGIC ---
-    // Only lock the button if we are actively highlighting a step AND it's not the end of the guide
+    // --- ENFORCE BUTTON LOCK ---
+    // Only lock if we are actively highlighting a step AND it's not the very end.
     let isPrimaryEnabled = true;
     if (hasActiveStep && currentStepIndex <= steps.length) {
        isPrimaryEnabled = stepInteractionCompleted;
     }
-    // ---------------------------------------
 
     setOverlayState({
       title: "Guide playback",
@@ -1926,7 +1984,7 @@
         ? "Start"
         : "Next step",
         
-      primaryEnabled: isPrimaryEnabled, // <--- Safely apply the calculated lock here
+      primaryEnabled: isPrimaryEnabled, // Apply calculated lock here
       
       secondaryLabel: "Stop",
       secondaryEnabled: true,
@@ -1962,17 +2020,18 @@
 
   async function handleOverlayNextStep() {
     if (!playbackGuide) return;
-    setOverlayState({ primaryEnabled: false });
+    setOverlayState({ primaryEnabled: false }); // Lock while searching
     const steps = playbackGuide.steps || [];
     if (currentStepIndex >= steps.length) {
-      // Already at end; just update UI to show Finish state.
-      //setOverlayState({ primaryEnabled: true });
       updatePlaybackOverlay();
       return;
     }
 
     const result = await showPlaybackStep();
-    setOverlayState({ primaryEnabled: true });
+    
+    // We NO LONGER force primaryEnabled to true here. 
+    // The checkPlaybackInteraction listener will unlock it when the user clicks.
+    
     if (typeof result?.nextIndex === "number") {
       currentStepIndex = result.nextIndex;
     }
@@ -1989,7 +2048,7 @@
           result?.error ||
           "Couldn't locate that element. Make sure the page hasn't changed.",
         primaryLabel: "Try again",
-        primaryEnabled: true,
+        primaryEnabled: true, // Re-enable so they can click "Try again"
       });
       return;
     }

@@ -533,45 +533,93 @@
   }
 
   // ---------- highlights ----------
+  // ---------- highlights ----------
   function showLiveHighlight(highlights = [], duration = 5000) {
     document.querySelectorAll(".nex-hl").forEach((n) => n.remove());
+    
     highlights.forEach((h) => {
+      // 1. ADD PADDING: Expand the box slightly so tiny elements aren't choked
+      const padding = 8;
+      const top = h.y - padding;
+      const left = h.x - padding;
+      const width = h.w + (padding * 2);
+      const height = h.h + (padding * 2);
+
       const box = document.createElement("div");
       box.className = "nex-hl";
       Object.assign(box.style, {
         position: "fixed",
-        top: `${h.y}px`,
-        left: `${h.x}px`,
-        width: `${h.w}px`,
-        height: `${h.h}px`,
+        top: `${top}px`,
+        left: `${left}px`,
+        width: `${width}px`,
+        height: `${height}px`,
         zIndex: 2147483643,
         pointerEvents: "none",
         border: "3px solid #E87C32",
-        backgroundColor: "rgba(232,124,50,0.15)",
-        borderRadius: "6px",
-        boxShadow: "0 0 15px rgba(232,124,50,0.4)",
+        backgroundColor: "rgba(232,124,50,0.1)",
+        borderRadius: "8px",
+        
+        // 2. THE SPOTLIGHT: Dims the rest of the screen and adds an inner/outer glow
+        boxShadow: "0 0 0 9999px rgba(0, 0, 0, 0.5), 0 0 20px 4px rgba(232,124,50,0.6) inset, 0 0 20px 4px rgba(232,124,50,0.6)",
+        transition: "all 0.3s ease-out"
       });
+
+      // 3. PULSE ANIMATION: Makes the box "breathe" to catch the eye
+      box.animate([
+        { transform: 'scale(1)', opacity: 0.85 },
+        { transform: 'scale(1.04)', opacity: 1 },
+        { transform: 'scale(1)', opacity: 0.85 }
+      ], {
+        duration: 1500,
+        iterations: Infinity,
+        easing: "ease-in-out"
+      });
+
       if (h.summary) {
         const label = document.createElement("div");
         Object.assign(label.style, {
           position: "absolute",
           top: `100%`,
-          left: 0,
-          marginTop: "6px",
-          background: "rgba(0,0,0,0.75)",
+          left: "50%",
+          transform: "translateX(-50%)", // Center the label perfectly
+          marginTop: "14px",
+          background: "#151522",
+          border: "1px solid #E87C32",
           color: "#fff",
-          padding: "6px 8px",
-          borderRadius: "4px",
-          fontSize: "12px",
+          padding: "8px 14px",
+          borderRadius: "6px",
+          fontSize: "14px",
+          fontWeight: "700",
           pointerEvents: "none",
+          whiteSpace: "nowrap",
+          boxShadow: "0 8px 24px rgba(0,0,0,0.6)"
         });
         label.textContent = h.summary;
+        
+        // Add a little triangle pointing up to the highlight box
+        const arrow = document.createElement("div");
+        Object.assign(arrow.style, {
+          position: "absolute",
+          bottom: "100%",
+          left: "50%",
+          transform: "translateX(-50%)",
+          borderWidth: "6px",
+          borderStyle: "solid",
+          borderColor: "transparent transparent #E87C32 transparent",
+        });
+        
+        label.appendChild(arrow);
         box.appendChild(label);
       }
+      
       document.documentElement.appendChild(box);
-      setTimeout(() => {
-        if (box.parentElement) box.remove();
-      }, duration);
+      
+      // Auto-remove if a duration is provided (0 means stay forever)
+      if (duration > 0) {
+        setTimeout(() => {
+          if (box.parentElement) box.remove();
+        }, duration);
+      }
     });
   }
 
@@ -2022,15 +2070,16 @@
     if (!playbackGuide) return;
     setOverlayState({ primaryEnabled: false }); // Lock while searching
     const steps = playbackGuide.steps || [];
+    
+    // --- FIX: ACTUALLY FINISH THE GUIDE ---
     if (currentStepIndex >= steps.length) {
-      updatePlaybackOverlay();
+      // If we are out of steps, the user clicked "Finish". Shut it down!
+      await finalizePlayback("finished");
       return;
     }
+    // --------------------------------------
 
     const result = await showPlaybackStep();
-    
-    // We NO LONGER force primaryEnabled to true here. 
-    // The checkPlaybackInteraction listener will unlock it when the user clicks.
     
     if (typeof result?.nextIndex === "number") {
       currentStepIndex = result.nextIndex;

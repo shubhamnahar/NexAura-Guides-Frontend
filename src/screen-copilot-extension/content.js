@@ -47,6 +47,10 @@
   });
   window.addEventListener("message", handleOverlayFrameMessage);
   window.addEventListener("message", handleRepairOverlayMessage);
+  document.addEventListener("click", checkPlaybackInteraction, true);
+  document.addEventListener("submit", checkPlaybackInteraction, true);
+  document.addEventListener("input", checkPlaybackInteraction, true);
+  document.addEventListener("change", checkPlaybackInteraction, true);
 
   window.addEventListener("message", handleOverlayFrameMessage);
   window.addEventListener("message", handleRepairOverlayMessage);
@@ -121,6 +125,9 @@
   let repairActive = false;
   let repairSelectMode = false;
   let repairStepIndex = null;
+  let activePlaybackElement = null;
+  let activePlaybackStep = null;
+  let stepInteractionCompleted = true; // defaults true so initial Start works
   const RECORDING_STATE_KEY_PREFIX = "nexaura_recording_state";
   let recordingStateKey = null;
   let currentTabId = null;
@@ -254,6 +261,7 @@
       playbackGuide,
       playbackIndex: currentStepIndex,
       lastHighlightedStepIndex,
+      stepInteractionCompleted,
     };
     suppressStorageEvents = true;
     try {
@@ -267,7 +275,7 @@
   window.addEventListener(
     "pagehide",
     () => {
-      if (!isRecording) return;
+      if (!isRecording && !playbackGuide) return;
       writeRecordingStateToStorage({
         recording: isRecording,
         steps: currentGuideSteps,
@@ -276,6 +284,7 @@
         playbackGuide,
         playbackIndex: currentStepIndex,
         lastHighlightedStepIndex,
+        stepInteractionCompleted,
       });
     },
     { capture: true }
@@ -320,6 +329,10 @@
       typeof snapshot.lastHighlightedStepIndex === "number"
         ? snapshot.lastHighlightedStepIndex
         : null;
+    stepInteractionCompleted =
+      snapshot.stepInteractionCompleted !== undefined
+        ? snapshot.stepInteractionCompleted
+        : true;
 
     currentGuideSteps = newSteps;
     pendingRecordingSteps = newPending;
@@ -559,6 +572,28 @@
         if (box.parentElement) box.remove();
       }, duration);
     });
+  }
+
+  // ---------- playback interaction listener ----------
+  function checkPlaybackInteraction(e) {
+    if (overlayMode !== "playback") return;
+    if (!activePlaybackElement || stepInteractionCompleted) return;
+    const target = e.target;
+    if (!target || !(target instanceof Element)) return;
+    if (!activePlaybackElement.contains(target) && activePlaybackElement !== target) return;
+
+    const isTypeEvent = e.type === "input" || e.type === "change";
+    const isClickEvent = e.type === "click" || e.type === "submit";
+
+    if (activePlaybackStep?.action === "type") {
+      if (!isTypeEvent) return;
+    } else {
+      if (!isClickEvent) return;
+    }
+
+    stepInteractionCompleted = true;
+    setOverlayState({ primaryEnabled: true });
+    syncSharedState();
   }
 
   // ---------- capture screen (used for recording + analyze) ----------
@@ -1155,6 +1190,7 @@
     playbackGuide = normalized || guide;
     currentStepIndex = 0;
     lastHighlightedStepIndex = null;
+    stepInteractionCompleted = true;
     await syncSharedState();
     // Panel / overlay will call EXECUTE_NEXT_PLAYBACK_STEP manually
     return { ok: true };
@@ -1164,6 +1200,7 @@
     playbackGuide = null;
     currentStepIndex = 0;
     lastHighlightedStepIndex = null;
+    stepInteractionCompleted = true;
     showLiveHighlight([]);
     await syncSharedState();
   }
@@ -1262,6 +1299,9 @@
       ],
       4000
     );
+    activePlaybackElement = el;
+    activePlaybackStep = step;
+    stepInteractionCompleted = false;
 
     // NO automatic click/type. User manually interacts with the element.
     chrome.runtime.sendMessage(
@@ -1840,6 +1880,7 @@
     const hasActiveStep =
       typeof lastHighlightedStepIndex === "number" &&
       lastHighlightedStepIndex < steps.length;
+      
     if (!hasActiveStep && currentStepIndex >= steps.length) {
       overlayPrimaryAction = () => {
         finalizePlayback("finished");
@@ -1863,6 +1904,15 @@
     overlaySecondaryAction = handleOverlayStopPlayback;
     const isLastHighlighted =
       hasActiveStep && displayIndex === steps.length - 1;
+
+    // --- UPDATED: BULLETPROOF LOCK LOGIC ---
+    // Only lock the button if we are actively highlighting a step AND it's not the end of the guide
+    let isPrimaryEnabled = true;
+    if (hasActiveStep && currentStepIndex <= steps.length) {
+       isPrimaryEnabled = stepInteractionCompleted;
+    }
+    // ---------------------------------------
+
     setOverlayState({
       title: "Guide playback",
       body: `Step ${displayIndex + 1} of ${steps.length}\n${
@@ -1875,7 +1925,9 @@
         : displayIndex === 0
         ? "Start"
         : "Next step",
-      primaryEnabled: true,
+        
+      primaryEnabled: isPrimaryEnabled, // <--- Safely apply the calculated lock here
+      
       secondaryLabel: "Stop",
       secondaryEnabled: true,
       secondaryVisible: true,
@@ -1914,7 +1966,7 @@
     const steps = playbackGuide.steps || [];
     if (currentStepIndex >= steps.length) {
       // Already at end; just update UI to show Finish state.
-      setOverlayState({ primaryEnabled: true });
+      //setOverlayState({ primaryEnabled: true });
       updatePlaybackOverlay();
       return;
     }

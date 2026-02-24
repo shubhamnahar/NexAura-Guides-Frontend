@@ -35,12 +35,14 @@ export function scoreCandidate({ el, target }) {
     }
   }
 
-  // 4. Text Match
+  // 4. Text Match (NEW: Search accessibility labels for icon buttons!)
   if (fp.text) {
-    const txt = normalizeText(el.textContent || el.value || "");
+    // Icons often hide their text in ARIA labels or tooltips
+    const rawText = el.textContent || el.value || el.getAttribute('aria-label') || el.getAttribute('data-tooltip') || el.getAttribute('title') || "";
+    const txt = normalizeText(rawText);
     if (txt) {
-      if (txt === fp.text) score += 2.5; // Exact match
-      else if (txt.includes(fp.text) || fp.text.includes(txt)) score += 1.2;
+      if (txt === fp.text) score += 3.0; // Boosted exact match
+      else if (txt.includes(fp.text) || fp.text.includes(txt)) score += 1.5;
     }
   }
 
@@ -57,17 +59,23 @@ export function scoreCandidate({ el, target }) {
     score += hits * 0.4;
   }
 
-  // 7. Geometry proximity (soft boost; avoids brittleness)
+  // 7. Geometry proximity (NEW: Massive boost for textless icon buttons)
   if (bbox && isFinite(bbox.x) && isFinite(bbox.y) && isFinite(bbox.width) && isFinite(bbox.height)) {
     const elRect = el.getBoundingClientRect();
     const iou = computeIoU(elRect, bbox);
     const centerDrift = computeCenterDrift(elRect, bbox);
+    
+    // If the element has no recorded text, it's likely an icon. 
+    // We must trust its visual position much more heavily.
+    const hasNoText = !fp.text || fp.text.trim() === ""; 
+    const posMultiplier = hasNoText ? 3.0 : 1.0;
+
     // Boost if overlap is meaningful or drift is small
     if (iou > 0.15) {
-      score += iou * 2; // up to ~0.6 boost
+      score += (iou * 2) * posMultiplier; 
     }
-    if (centerDrift < 0.25) {
-      score += (1 - centerDrift) * 1.5; // up to ~1.5 boost when centered
+    if (centerDrift < 0.30) {
+      score += ((1 - centerDrift) * 1.5) * posMultiplier; 
     }
   }
 

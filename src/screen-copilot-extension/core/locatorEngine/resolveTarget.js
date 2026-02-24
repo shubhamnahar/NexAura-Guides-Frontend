@@ -149,13 +149,29 @@ function resolveInFrame(frame, target, debug) {
 
   if (!candidates.length) return null;
   
-  // NEW TIE-BREAKER: Sort by score, but if the scores are tied, the smaller element wins!
+  // NEW TIE-BREAKER: Sort by score, but if the scores are tied...
   candidates.sort((a, b) => {
     const scoreDiff = b.score - a.score;
-    // If scores are within 1 point of each other, break the tie by area
+    // If scores are within 1 point of each other, break the tie!
     if (Math.abs(scoreDiff) < 1.0) {
       const rA = a.el.getBoundingClientRect();
       const rB = b.el.getBoundingClientRect();
+      
+      // 1. SPATIAL TIE-BREAKER (Crucial for identical toolbar icons)
+      const bbox = target.vision?.bbox;
+      if (bbox && isFinite(bbox.x) && isFinite(bbox.y) && isFinite(bbox.width) && isFinite(bbox.height)) {
+        const cx = bbox.x + bbox.width / 2;
+        const cy = bbox.y + bbox.height / 2;
+        const distA = Math.hypot((rA.x + rA.width / 2) - cx, (rA.y + rA.height / 2) - cy);
+        const distB = Math.hypot((rB.x + rB.width / 2) - cx, (rB.y + rB.height / 2) - cy);
+        
+        // If one icon is significantly closer to the original click (e.g. > 15px diff), it wins!
+        if (Math.abs(distA - distB) > 15) {
+            return distA - distB; // Ascending order (closest first)
+        }
+      }
+
+      // 2. AREA TIE-BREAKER (Crucial for defeating massive parent wrappers)
       // Fallback to Infinity so 0-size hidden elements are pushed to the bottom
       const areaA = (rA.width * rA.height) || Infinity;
       const areaB = (rB.width * rB.height) || Infinity;

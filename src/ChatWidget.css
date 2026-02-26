@@ -71,3 +71,19 @@
     border-radius: 0 0 8px 0;
   }
   
+  /* Clean formatting for the bot's step-by-step list */
+/* Clean formatting for the bot's step-by-step list */
+.bot-steps {
+  margin: 0;
+  padding-left: 20px; 
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.bot-steps li {
+  margin-bottom: 8px; /* Adds breathing room between instructions */
+}
+
+.bot-steps li:last-child {
+  margin-bottom: 0;
+}

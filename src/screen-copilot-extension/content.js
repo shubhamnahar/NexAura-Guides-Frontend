@@ -51,7 +51,7 @@
   document.addEventListener("submit", checkPlaybackInteraction, true);
   document.addEventListener("input", checkPlaybackInteraction, true);
   document.addEventListener("change", checkPlaybackInteraction, true);
-
+  document.addEventListener("mousedown", checkPlaybackInteraction, true);
   window.addEventListener("message", handleOverlayFrameMessage);
   window.addEventListener("message", handleRepairOverlayMessage);
 
@@ -632,7 +632,9 @@
     if (!activePlaybackElement.contains(target) && activePlaybackElement !== target) return;
 
     const isTypeEvent = e.type === "input" || e.type === "change";
-    const isClickEvent = e.type === "click" || e.type === "submit";
+    
+    // 🆕 NEW: Added e.type === "mousedown" so it unlocks the button for custom dropdowns
+    const isClickEvent = e.type === "click" || e.type === "submit" || e.type === "mousedown";
 
     if (activePlaybackStep?.action === "type") {
       if (!isTypeEvent) return;
@@ -641,7 +643,7 @@
     }
 
     stepInteractionCompleted = true;
-    setOverlayState({ primaryEnabled: true });
+    setOverlayState({ primaryEnabled: true }); // Unlocks the "Next step" button
     syncSharedState();
   }
 
@@ -702,10 +704,8 @@
   async function handleInteraction(event) {
     if (!isRecording || isProgrammaticallyClicking) return;
     
-    // --- NEW: UX DOUBLE-CLICK LOCK ---
+    // --- UX DOUBLE-CLICK LOCK ---
     if (isProcessingInteraction) {
-      // If the user clicks again while we are grabbing the screenshot, 
-      // completely block it so it doesn't navigate out of order!
       if (event.isTrusted) {
         event.preventDefault();
         event.stopPropagation();
@@ -713,7 +713,6 @@
       }
       return;
     }
-    // ---------------------------------
 
     if (!event.isTrusted) return;
 
@@ -723,6 +722,21 @@
         : event.target?.parentElement || null;
     if (!target) return;
     if (peekHandle && peekHandle.contains(target)) return;
+
+    // --- NEW: SELECT2 & CUSTOM DROPDOWN LOGIC ---
+    // Detect if this is a custom component that swallows clicks
+    const isDropdown = target.closest('.select2-container, .select2-choice, .select2-arrow, .chosen-container, [class*="select2"]');
+    
+    if (event.type === "mousedown") {
+        // If it's a normal button/link, ignore mousedown and wait for the actual "click" event.
+        if (!isDropdown) return;
+    }
+    
+    if (event.type === "click") {
+        // If it IS a Select2, we already recorded it on "mousedown". Don't double record!
+        if (isDropdown) return;
+    }
+    // --------------------------------------------
 
     // Activate the lock!
     isProcessingInteraction = true;
@@ -901,7 +915,7 @@
               view: window,
               bubbles: true,
               cancelable: true,
-              composed: true, // Crucial for Shadow DOMs and React event delegation
+              composed: true,
               buttons: (event && event.buttons) || 1,
               clientX: (event && event.clientX) || 0,
               clientY: (event && event.clientY) || 0,
@@ -913,16 +927,14 @@
               metaKey: (event && event.metaKey) || false
             };
 
-            // 1. Dispatch a full sequence of events for SPAs like React and for complex players like YouTube
+            // 1. Dispatch a full sequence of events. Select2 MUST have mousedown to open!
             actionable.dispatchEvent(new MouseEvent("mousedown", eventInit));
             actionable.dispatchEvent(new MouseEvent("mouseup", eventInit));
             actionable.dispatchEvent(new MouseEvent("click", eventInit));
 
-            // 2. Fallback: If it's an SVG or span inside an <a> tag, and the SPA 
-            // didn't handle the simulated event, force the native behavior
+            // 2. Fallback: Force standard navigation if single-page routing fails
             const anchor = actionable.closest("a");
             if (anchor && anchor.href && !anchor.href.startsWith("javascript:") && !anchor.getAttribute('href').startsWith('#')) {
-               // If the click wasn't caught by the SPA router, manually navigate
                window.location.href = anchor.href;
             }
           }
@@ -947,6 +959,10 @@
     isRecording = true;
     document.addEventListener("click", handleInteraction, true);
     document.addEventListener("submit", handleInteraction, true);
+    
+    // NEW: Listen to mousedown to catch elements that swallow clicks
+    document.addEventListener("mousedown", handleInteraction, true);
+    
     if (isTopFrame) {
       enterRecordingOverlay();
     }
@@ -957,6 +973,8 @@
     isRecording = false;
     document.removeEventListener("click", handleInteraction, true);
     document.removeEventListener("submit", handleInteraction, true);
+    document.removeEventListener("mousedown", handleInteraction, true);
+    
     if (isTopFrame) {
       exitRecordingOverlay();
     }

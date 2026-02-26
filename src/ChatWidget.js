@@ -22,27 +22,28 @@ export default function ChatWidget({ captureFrame }) {
     const newMsg = { role: "user", text: input };
     setMessages((prev) => [...prev, newMsg]);
     setLoading(true);
+    setInput("");
 
     try {
-      const res = await axios.post("http://127.0.0.1:8000/api/analyze_live", {
-        image_base64: imageBase64,
-        question: input,
-      });
+      const res = await axios.post("http://127.0.0.1:8000/api/analyze_live", 
+        // 1st Parameter: The data payload
+        {
+          image_base64: imageBase64,
+          question: input,
+        },        
+      );
 
-      let cleaned = res.data.result.text
-        .replace(/```json/g, "")
-        .replace(/```/g, "")
-        .trim();
-      const parsed = JSON.parse(cleaned);
-
-      const reply = { role: "bot", text: parsed.steps?.join("\n") || "No steps found." };
+      // Now Axios knows it's just text, so it won't crash! res.data will be your exact string.
+      const botText = res.data || "No response received.";
+      
+      const reply = { role: "bot", text: botText };
       setMessages((prev) => [...prev, reply]);
+      
     } catch (err) {
       console.error(err);
       setMessages((prev) => [...prev, { role: "bot", text: "Error analyzing screen." }]);
     } finally {
       setLoading(false);
-      setInput("");
     }
   };
 
@@ -56,7 +57,12 @@ export default function ChatWidget({ captureFrame }) {
         <div className="chat-body">
           <div className="messages">
             {messages.map((msg, i) => (
-              <div key={i} className={`msg ${msg.role}`}>
+              <div 
+                key={i} 
+                className={`msg ${msg.role}`}
+                // 🆕 STYLE: "pre-wrap" ensures the \n from backend becomes a new line
+                style={{ whiteSpace: "pre-wrap", lineHeight: "1.5" }}
+              >
                 {msg.text}
               </div>
             ))}

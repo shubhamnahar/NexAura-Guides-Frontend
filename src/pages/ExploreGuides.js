@@ -48,6 +48,7 @@ const ExploreGuides = () => {
       <div className="container">
         <h1 className="page-title">Explore All Guides</h1>
 
+
         <form onSubmit={handleSearch} className="search-form">
           <input 
             type="text"

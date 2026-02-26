@@ -73,6 +73,79 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         });
         return true;
       }
+      case "SAVE_GUIDE_API": {
+  fetch("http://127.0.0.1:8000/api/guides/", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${message.token}`,
+    },
+    body: JSON.stringify(message.payload),
+  })
+  .then(async (res) => {
+    if (!res.ok) {
+      // Try to extract backend error detail, default to generic if it fails
+      const err = await res.json().catch(() => ({ detail: "unknown" }));
+      throw new Error(err.detail || `HTTP error! status: ${res.status}`);
+    }
+    const data = await res.json();
+    sendResponse({ ok: true, saved: data });
+  })
+  .catch((err) => {
+    console.error("Save Guide Error:", err);
+    sendResponse({ ok: false, error: err.message });
+  });
+
+  return true;
+}
+
+// --- ANALYZE SCREEN API PROXY ---
+case "ANALYZE_SCREEN_API":{
+  fetch("http://127.0.0.1:8000/api/analyze/analyze_live", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(message.payload),
+  })
+  .then(async (res) => {
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Analyze failed: ${res.status} ${text}`);
+    }
+    const data = await res.json();
+    sendResponse({ ok: true, data: data });
+  })
+  .catch((err) => {
+    console.error("Analyze Screen Error:", err);
+    sendResponse({ ok: false, error: err.message });
+  });
+
+  return true;
+}
+
+      case "FETCH_GUIDES_API":{
+        fetch("http://127.0.0.1:8000/api/guides/", {
+          method: "GET",
+          headers: { Authorization: `Bearer ${message.token}` },
+        })
+        .then(async (res) => {
+        // 1. Check if the response is OK
+        if (!res.ok) {
+          throw new Error(`HTTP error! status: ${res.status}`);
+        }
+        // 2. THIS IS THE MISSING STEP: Parse the body!
+        // This changes bodyUsed from false to true
+        const data = await res.json(); 
+        
+        // 3. Send the plain data back to content.js
+        sendResponse({ ok: true, guides: data }); 
+      })
+      .catch(err => {
+        console.error("Fetch Error:", err);
+        sendResponse({ ok: false, error: err.message });
+      });
+        
+        return true; // Tells Chrome we will send the response asynchronously
+      }
 
       case "GET_TAB_ID":
         sendResponse({ tabId: sender?.tab?.id ?? null });

@@ -1387,12 +1387,17 @@
     const token = tokenObj?.nexaura_token;
     if (!token) throw new Error("No token. Please log in.");
     const cache = await readScreenshotCache();
-    const res = await fetch("http://127.0.0.1:8000/api/guides/", {
-      method: "GET",
-      headers: { Authorization: `Bearer ${token}` },
+    // const res = await fetch("http://127.0.0.1:8000/api/guides/", {
+    //   method: "GET",
+    //   headers: { Authorization: `Bearer ${token}` },
+    // });
+    const res = await new Promise((resolve) => {
+    chrome.runtime.sendMessage({ type: "FETCH_GUIDES_API", token: token }, resolve);
     });
-    if (!res.ok) throw new Error("Failed to fetch guides");
-    const guides = await res.json();
+    if (!res || !res.ok) {
+    throw new Error(res?.error || "Failed to fetch guides via background script");
+    }
+    const guides = res.guides;
     const userId = getUserIdFromToken(token);
     let scopedGuides = guides;
     if (userId) {
@@ -1443,21 +1448,27 @@
       })),
     };
 
-    const res = await fetch("http://127.0.0.1:8000/api/guides/", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify(payload),
-    });
+    // const res = await fetch("http://127.0.0.1:8000/api/guides/", {
+    //   method: "POST",
+    //   headers: {
+    //     "Content-Type": "application/json",
+    //     Authorization: `Bearer ${token}`,
+    //   },
+    //   body: JSON.stringify(payload),
+    // });
 
-    if (!res.ok) {
+    const res = await new Promise((resolve) => {
+    chrome.runtime.sendMessage(
+      { type: "SAVE_GUIDE_API", token: token, payload: payload },
+      resolve
+    );
+  });
+    if (!res || !res.ok) {
       const err = await res.json().catch(() => ({ detail: "unknown" }));
       throw new Error(err.detail || "Failed to save guide");
     }
     
-    const saved = await res.json();
+    //const saved = await res.json();
     
     // --- NEW: GARBAGE COLLECTION ---
     // Instead of saving these massive images permanently, we 
@@ -1465,15 +1476,20 @@
     await clearRecordingStateStorage();
     // -------------------------------
     
-    return saved;
+    // return saved;
+    return res.saved;
   }
 
   async function analyzeScreenWithServer(imageBase64, question) {
-    const res = await fetch("http://127.0.0.1:8000/api/analyze/analyze_live", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ image_base64: imageBase64, question }),
-    });
+    const res = await new Promise((resolve) => {
+    chrome.runtime.sendMessage(
+      {
+        type: "ANALYZE_SCREEN_API",
+        payload: { image_base64: imageBase64, question: question },
+      },
+      resolve
+    );
+  });
     if (!res.ok) {
       const text = await res.text();
       throw new Error(`Analyze failed: ${res.status} ${text}`);

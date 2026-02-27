@@ -1408,6 +1408,33 @@
     return scopedGuides.map((g) => hydrateGuideScreenshots(g, cache));
   }
 
+  async function fetchSingleGuideFromServer(shortcut) {
+    const tokenObj = await new Promise((r) => chrome.storage.local.get("nexaura_token", r));
+    const token = tokenObj?.nexaura_token;
+    if (!token) throw new Error("No token. Please log in.");
+
+    const cache = await readScreenshotCache();
+
+    // Send the shortcut to the background script to include in the API call
+    const res = await new Promise((resolve) => {
+      chrome.runtime.sendMessage({ 
+        type: "FETCH_SPECIFIC_GUIDE_API", 
+        token: token,
+        shortcut: shortcut 
+      }, resolve);
+    });
+
+    if (!res || !res.ok) {
+      // Backend should return a 404 if not found, which translates to this error
+      throw new Error(res?.error || "Guide not found on server.");
+  }
+
+  const guide = res.guide;
+  
+  // Hydrate only the one guide we actually need
+  return hydrateGuideScreenshots(guide, cache);
+}
+
   function getUserIdFromToken(token) {
     try {
       const parts = token.split(".");
@@ -2309,6 +2336,18 @@
           sendResponse({ ok: true, guides });
         } catch (err) {
           console.error("GET_GUIDES error:", err);
+          sendResponse({ ok: false, error: err.message });
+        }
+      })();
+      return true;
+    }
+    if (message.type === "GET_GUIDE_BY_SHORTCUT") {
+      (async () => {
+        try {
+          const guide = await fetchSingleGuideFromServer(message.shortcut);
+          sendResponse({ ok: true, guide });
+        } catch (err) {
+          console.error("GET_GUIDE error:", err);
           sendResponse({ ok: false, error: err.message });
         }
       })();

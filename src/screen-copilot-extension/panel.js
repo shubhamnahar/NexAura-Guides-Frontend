@@ -397,16 +397,17 @@ async function getActiveTabId() {
       
           addMessage("bot", `🔎 Looking for guide <code>${escapeHtml(shortcut)}</code>...`);
       
-          const res = await sendToContent({ type: "GET_GUIDES" });
+          const res = await sendToContent({ type: "GET_GUIDE_BY_SHORTCUT" ,shortcut: shortcut });
       
           if (!res?.ok) {
             addMessage("bot", `<strong>Error:</strong> ${escapeHtml(res?.error || "Failed to fetch guides")}`);
             return;
           }
       
-          const guides = res.guides || [];
-          const match = guides.find(g => g.shortcut.toLowerCase() === shortcut);
+          // const guides = res.guides || [];
+          // const match = guides.find(g => g.shortcut.toLowerCase() === shortcut);
       
+          const match = res.guide;
           if (!match) {
             addMessage("bot", `❌ No guide found with shortcut <code>${escapeHtml(shortcut)}</code>`);
             return;

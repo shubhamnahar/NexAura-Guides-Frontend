@@ -128,23 +128,44 @@ case "ANALYZE_SCREEN_API":{
           headers: { Authorization: `Bearer ${message.token}` },
         })
         .then(async (res) => {
-        // 1. Check if the response is OK
         if (!res.ok) {
           throw new Error(`HTTP error! status: ${res.status}`);
         }
-        // 2. THIS IS THE MISSING STEP: Parse the body!
-        // This changes bodyUsed from false to true
         const data = await res.json(); 
-        
-        // 3. Send the plain data back to content.js
         sendResponse({ ok: true, guides: data }); 
       })
       .catch(err => {
         console.error("Fetch Error:", err);
         sendResponse({ ok: false, error: err.message });
       });
+        return true; 
+      }
+
+       case "FETCH_SPECIFIC_GUIDE_API": {
+        // We use query parameters e.g., ?shortcut=/my-guide
+        const url = `http://127.0.0.1:8000/api/guides/search?shortcut=${encodeURIComponent(message.shortcut)}`;
         
-        return true; // Tells Chrome we will send the response asynchronously
+        fetch(url, {
+          method: "GET",
+          headers: { Authorization: `Bearer ${message.token}` },
+        })
+        .then(async (res) => {
+          if (!res.ok) {
+            // Handle 404 cleanly so the frontend bot can say "Guide not found"
+            if (res.status === 404) {
+              throw new Error("Guide not found");
+            }
+            throw new Error(`HTTP error! status: ${res.status}`);
+          }
+          const data = await res.json(); 
+          // Notice we return 'guide', not 'guides' array
+          sendResponse({ ok: true, guide: data }); 
+        })
+        .catch(err => {
+          console.error("Fetch Specific Guide Error:", err);
+          sendResponse({ ok: false, error: err.message });
+        });
+        return true; 
       }
 
       case "GET_TAB_ID":

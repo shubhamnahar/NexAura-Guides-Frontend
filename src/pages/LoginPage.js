@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react'; // Import useEffect
 import { Link, useNavigate } from 'react-router-dom';
-import { useAuth } from '../AuthContext'; 
-import '../Auth.css'; 
+import { useAuth } from '../contexts/AuthContext';
+import { endpoints } from '../services/api';
+import '../styles/pages/Auth.css';
 
 const LoginPage = () => {
   const navigate = useNavigate();
@@ -34,7 +35,7 @@ const LoginPage = () => {
     formData.append('password', password);
 
     try {
-      const response = await fetch('http://127.0.0.1:8000/api/auth/token', {
+      const response = await fetch(endpoints.auth.login, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',

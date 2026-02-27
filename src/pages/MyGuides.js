@@ -1,8 +1,9 @@
 // src/pages/MyGuides.js
 import React, { useState, useEffect } from 'react';
-import { useAuth } from '../AuthContext';
-import GuideCard from '../components/GuideCard';
-import './Page.css';
+import { useAuth } from '../contexts/AuthContext';
+import { endpoints } from '../services/api';
+import GuideCard from '../components/GuideCard/GuideCard';
+import '../styles/pages/Page.css';
 
 const MyGuides = () => {
   const [guides, setGuides] = useState([]);
@@ -19,7 +20,7 @@ const MyGuides = () => {
       }
 
       try {
-        const response = await fetch('http://127.0.0.1:8000/api/guides/', {
+        const response = await fetch(endpoints.guides.base, {
           method: 'GET',
           headers: {
             Authorization: `Bearer ${token}`,
@@ -49,7 +50,7 @@ const MyGuides = () => {
 
     try {
       const response = await fetch(
-        `http://127.0.0.1:8000/api/guides/${guideId}`,
+        endpoints.guides.detail(guideId),
         {
           method: 'DELETE',
           headers: {
@@ -94,7 +95,7 @@ const MyGuides = () => {
 
     try {
       const response = await fetch(
-        `http://127.0.0.1:8000/api/guides/${guideId}/export-pdf`,
+        endpoints.guides.exportPdf(guideId),
         {
           method: 'GET',
           headers: {

@@ -1,5 +1,6 @@
 // background.js — MV3 service worker
 // Implements "Background Master" pattern: background owns recording state in chrome.storage.local.
+import { config } from './config.js';
 
 const RECORDING_KEY = "nexaura_recording_session";
 const frameRegistry = new Map();
@@ -74,7 +75,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return true;
       }
       case "SAVE_GUIDE_API": {
-  fetch("http://127.0.0.1:8000/api/guides/", {
+  fetch(`${config.API_BASE_URL}/api/guides/`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -101,7 +102,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 // --- ANALYZE SCREEN API PROXY ---
 case "ANALYZE_SCREEN_API":{
-  fetch("http://127.0.0.1:8000/api/analyze/analyze_live", {
+  fetch(`${config.API_BASE_URL}/api/analyze/analyze_live`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(message.payload),
@@ -123,7 +124,7 @@ case "ANALYZE_SCREEN_API":{
 }
 
       case "FETCH_GUIDES_API":{
-        fetch("http://127.0.0.1:8000/api/guides/", {
+        fetch(`${config.API_BASE_URL}/api/guides/`, {
           method: "GET",
           headers: { Authorization: `Bearer ${message.token}` },
         })
@@ -143,7 +144,7 @@ case "ANALYZE_SCREEN_API":{
 
        case "FETCH_SPECIFIC_GUIDE_API": {
         // We use query parameters e.g., ?shortcut=/my-guide
-        const url = `http://127.0.0.1:8000/api/guides/search?shortcut=${encodeURIComponent(message.shortcut)}`;
+        const url = `${config.API_BASE_URL}/api/guides/search?shortcut=${encodeURIComponent(message.shortcut)}`;
         
         fetch(url, {
           method: "GET",

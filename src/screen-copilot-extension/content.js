@@ -1661,6 +1661,17 @@
     });
   }
 
+  // --- 🔊 VOICE ENGINE ---
+  function speakInstruction(text) {
+    if (!text) return;
+    window.speechSynthesis.cancel(); // Stop current speech
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.rate = 1.0;  
+    utterance.pitch = 1.0; 
+    utterance.volume = 1.0; 
+    window.speechSynthesis.speak(utterance);
+  }
+
   function getDefaultOverlayState() {
     return {
       title: "",
@@ -2051,6 +2062,9 @@
       ? Math.min(lastHighlightedStepIndex, steps.length - 1)
       : Math.min(currentStepIndex, steps.length - 1);
     const step = steps[displayIndex];
+    if (step && step.instruction) {
+      speakInstruction(step.instruction);
+    }
     overlayPrimaryAction = handleOverlayNextStep;
     overlaySecondaryAction = handleOverlayStopPlayback;
     const isLastHighlighted =
@@ -2155,6 +2169,9 @@
   }
 
   async function finalizePlayback(reason) {
+    // 🔊 INSTANTLY STOP THE VOICE
+    window.speechSynthesis.cancel();
+
     await finishPlayback();
     exitPlaybackOverlay();
     showPanel();

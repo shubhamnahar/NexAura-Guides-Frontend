@@ -12,6 +12,24 @@ export function createRunner(guide, opts = {}) {
     notify();
   };
 
+  // --- NATIVE BROWSER VOICE FUNCTION ---
+  function speakInstruction(text) {
+    console.log("🗣️ Attempting to speak:", text); // <--- ADD THIS
+    
+    window.speechSynthesis.cancel(); 
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.rate = 1.0;  
+    utterance.pitch = 1.0; 
+    utterance.volume = 1.0; 
+    
+    // Sometimes Chrome needs a specific voice assigned to wake up
+    const voices = window.speechSynthesis.getVoices();
+    if (voices.length > 0) {
+        utterance.voice = voices[0]; 
+    }
+
+    window.speechSynthesis.speak(utterance);
+  }
   async function runStep(idx) {
     if (!guide?.steps || idx >= guide.steps.length) {
       setSession({
@@ -23,12 +41,22 @@ export function createRunner(guide, opts = {}) {
     }
     abortController = new AbortController();
     setSession({ ...session, state: RunnerState.RUNNING_STEP, stepIndex: idx });
+    
+    // Grab the step
     const step = guide.steps[idx];
+
+    // 🔊 1. SPEAK THE INSTRUCTION HERE!
+    // Trigger the voice right as the step begins executing and the UI updates.
+    if (step && step.instruction) {
+      speakInstruction(step.instruction);
+    }
+
     const res = await executeStep(step, {
       timeoutMs: opts.stepTimeoutMs || 10000,
       retries: opts.stepRetries ?? 1,
       signal: abortController.signal,
     });
+    
     if (res.status === StepStatus.SUCCESS) {
       setSession(
         appendLog(
@@ -69,6 +97,10 @@ export function createRunner(guide, opts = {}) {
       runStep(session.stepIndex + 1);
     },
     cancel() {
+      // 🔊 2. CUT OFF THE VOICE IF CANCELED
+      // If the user hits "Stop" mid-sentence, this shuts it up instantly.
+      window.speechSynthesis.cancel();
+      
       abortController?.abort();
       setSession({ ...session, state: RunnerState.CANCELLED });
     },

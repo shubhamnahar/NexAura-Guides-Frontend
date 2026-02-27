@@ -701,10 +701,13 @@
   }
 
   // ---------- recording ----------
+  // ---------- recording ----------
   async function handleInteraction(event) {
     if (!isRecording || isProgrammaticallyClicking) return;
     
-    // --- UX DOUBLE-CLICK LOCK ---
+    // --- TRAP NATIVE EVENTS DURING PROCESSING ---
+    // This catches the user's physical 'mouseup' and 'click' that happen 
+    // after we freeze the screen on 'mousedown', preventing them from confusing Select2.
     if (isProcessingInteraction) {
       if (event.isTrusted) {
         event.preventDefault();
@@ -716,6 +719,9 @@
 
     if (!event.isTrusted) return;
 
+    // We never start a recording step on a pure mouseup, we just use it for trapping above.
+    if (event.type === "mouseup") return;
+
     const target =
       event.target instanceof Element
         ? event.target
@@ -723,18 +729,17 @@
     if (!target) return;
     if (peekHandle && peekHandle.contains(target)) return;
 
-    // --- NEW: SELECT2 & CUSTOM DROPDOWN LOGIC ---
-    // Detect if this is a custom component that swallows clicks
-    const isDropdown = target.closest('.select2-container, .select2-choice, .select2-arrow, .chosen-container, [class*="select2"]');
+    // --- SELECT2 & CUSTOM DROPDOWN DETECTION ---
+    const isDropdown = target.closest('.select2-container, .select2-choice, .select2-arrow, .chosen-container, [class*="select2"]') !== null || 
+                       target.classList.contains('custom-select-trigger') ||
+                       target.closest('.custom-select-trigger') !== null;
     
     if (event.type === "mousedown") {
-        // If it's a normal button/link, ignore mousedown and wait for the actual "click" event.
-        if (!isDropdown) return;
+        if (!isDropdown) return; // Normal buttons ignore mousedown and wait for 'click'
     }
     
     if (event.type === "click") {
-        // If it IS a Select2, we already recorded it on "mousedown". Don't double record!
-        if (isDropdown) return;
+        if (isDropdown) return; // Dropdowns already recorded on 'mousedown', avoid double record
     }
     // --------------------------------------------
 
@@ -761,7 +766,6 @@
             null
           : null;
 
-      // Visual feedback to confirm we caught the interaction.
       try {
         const rect = actionable.getBoundingClientRect();
         showLiveHighlight(
@@ -774,23 +778,20 @@
               summary: "Recorded step",
             },
           ],
-          3000 // Increased duration to ensure it's captured in the screenshot
+          3000
         );
       } catch (err) {
         console.warn("NexAura: highlight failed", err);
       }
 
-      // Give the browser a moment to paint the highlight before capturing the screen
       await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
 
-      // Determine input/value semantics.
       const isInput =
         (actionable.tagName === "INPUT" &&
           /text|email|search|password|tel|url/i.test(actionable.type)) ||
         actionable.tagName === "TEXTAREA";
       const isContentEditable = actionable.isContentEditable;
 
-      // Capture rich target metadata.
       let capturedTarget = null;
       try {
         const { captureTarget } = await loadModule(
@@ -800,7 +801,6 @@
           id: currentFrameId,
           href: window.location.href,
         });
-        // Scale bbox by DPR for correct highlight position
         if (capturedTarget?.vision?.bbox) {
           capturedTarget.vision.bbox = scaleBboxByDpr(actionable.getBoundingClientRect());
         }
@@ -813,9 +813,6 @@
           (l) => l?.type === "css" && l.confidence >= 0.75
         ) || null;
       const selector = finderLocator?.value || getCssSelector(actionable);
-      if (!selector) {
-        console.warn("NexAura: couldn't generate selector");
-      }
 
       let action = actionType === "submit" ? "submit" : "click";
       let value = null;
@@ -858,41 +855,28 @@
         eventType: actionType,
       };
 
-      // Persist synchronously so we survive reloads.
       persistPendingStep(step);
 
-      // Wait for the screenshot (up to 2500ms) before sending to the background
       try {
         const screenshot = await captureScreenWithTimeout(2500);
         if (screenshot) {
           step.screenshot = screenshot;
-          persistPendingStep(step); // refresh with screenshot
+          persistPendingStep(step);
         }
       } catch (err) {
         console.warn("NexAura: screenshot (fast) failed", err);
       }
 
-      // NOW send to background, ensuring the screenshot is attached if it succeeded
       const sendToBackground = new Promise((resolve) => {
         chrome.runtime.sendMessage({ type: "RECORD_STEP", payload: step }, (res) => {
-          if (chrome.runtime.lastError) {
-            console.warn("RECORD_STEP failed:", chrome.runtime.lastError.message);
-            resolve(false);
-            return;
-          }
-          if (res?.ok) {
-            clearPendingStep();
-          }
+          if (res?.ok) clearPendingStep();
           resolve(true);
         });
       });
 
       currentGuideSteps.push(step);
 
-      // We await these so they finish before we trigger the actual click replay
-      await syncSharedState().catch((err) =>
-        console.warn("NexAura: async syncSharedState failed", err)
-      );
+      await syncSharedState().catch(() => {});
       await sendToBackground;
 
       // Replay the user's intended action after a short pause.
@@ -927,7 +911,8 @@
               metaKey: (event && event.metaKey) || false
             };
 
-            // 1. Dispatch a full sequence of events. Select2 MUST have mousedown to open!
+            // 1. ALWAYS dispatch the full exact sequence to mimic human behavior!
+            // Select2 MUST have mousedown to prepare its focus state, and click to open/select.
             actionable.dispatchEvent(new MouseEvent("mousedown", eventInit));
             actionable.dispatchEvent(new MouseEvent("mouseup", eventInit));
             actionable.dispatchEvent(new MouseEvent("click", eventInit));
@@ -943,14 +928,14 @@
         } finally {
           setTimeout(() => {
             isProgrammaticallyClicking = false;
-            isProcessingInteraction = false; // <--- RELEASE THE LOCK ON SUCCESS
+            isProcessingInteraction = false; // RELEASE THE LOCK ON SUCCESS
           }, 0);
         }
       }, REPLAY_DELAY_MS);
       
     } catch (err) {
       console.error("NexAura: Error processing interaction", err);
-      isProcessingInteraction = false; // <--- RELEASE THE LOCK ON ERROR
+      isProcessingInteraction = false; // RELEASE THE LOCK ON ERROR
     }
   }
 
@@ -959,10 +944,8 @@
     isRecording = true;
     document.addEventListener("click", handleInteraction, true);
     document.addEventListener("submit", handleInteraction, true);
-    
-    // NEW: Listen to mousedown to catch elements that swallow clicks
     document.addEventListener("mousedown", handleInteraction, true);
-    
+    document.addEventListener("mouseup", handleInteraction, true); // <--- ADDED MOUSEUP
     if (isTopFrame) {
       enterRecordingOverlay();
     }
@@ -974,7 +957,7 @@
     document.removeEventListener("click", handleInteraction, true);
     document.removeEventListener("submit", handleInteraction, true);
     document.removeEventListener("mousedown", handleInteraction, true);
-    
+    document.removeEventListener("mouseup", handleInteraction, true); // <--- ADDED MOUSEUP
     if (isTopFrame) {
       exitRecordingOverlay();
     }

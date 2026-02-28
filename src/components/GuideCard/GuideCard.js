@@ -9,6 +9,8 @@ import '../../styles/components/GuideCard.css';
  * - onDelete: function(guideId)
  * - showDownload: boolean (show download button)
  * - onDownload: function(guide)
+ * - isOwner: boolean (is current user owner of the guide)
+ * - onShare: function(guide)
  */
 const GuideCard = ({
   guide,
@@ -16,6 +18,8 @@ const GuideCard = ({
   onDelete,
   showDownload = false,
   onDownload,
+  isOwner = false,
+  onShare,
 }) => {
   const [isExpanded, setIsExpanded] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -50,7 +54,13 @@ const GuideCard = ({
     onDownload(guide);
   };
 
-  const hasActions = showDelete || showDownload;
+  const handleShareClick = (e) => {
+    e.stopPropagation();
+    if (!onShare) return;
+    onShare(guide);
+  };
+
+  const hasActions = showDelete || showDownload || (isOwner && onShare);
 
   return (
     <div
@@ -63,6 +73,7 @@ const GuideCard = ({
       }}
       style={{ cursor: hasActions ? 'default' : 'pointer' }}
     >
+      {!isOwner && <div className="shared-badge">Shared</div>}
       <h3 className="guide-card-title">{guide.name}</h3>
       <p
         className="guide-card-shortcut"
@@ -100,7 +111,16 @@ const GuideCard = ({
             </button>
           )}
 
-          {showDelete && (
+          {isOwner && onShare && (
+            <button
+              className="guide-card-share-btn"
+              onClick={handleShareClick}
+            >
+              Share
+            </button>
+          )}
+
+          {showDelete && isOwner && (
             <button
               className="guide-card-delete-btn"
               aria-label={`Delete ${guide.name}`}

@@ -10,7 +10,10 @@ export const endpoints = {
     public: `${API_BASE_URL}/api/guides/public`,
     search: `${API_BASE_URL}/api/guides/search`,
     detail: (id) => `${API_BASE_URL}/api/guides/${id}`,
+    update: (id) => `${API_BASE_URL}/api/guides/${id}`,
     exportPdf: (id) => `${API_BASE_URL}/api/guides/${id}/export-pdf`,
+    shareToken: (id) => `${API_BASE_URL}/api/guides/${id}/share-token`,
+    claimAccess: (token) => `${API_BASE_URL}/api/guides/share/access/${token}`,
   },
   analyze: {
     live: `${API_BASE_URL}/api/analyze_live`,

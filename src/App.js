@@ -1,11 +1,11 @@
 // src/App.js
 import React from 'react';
 import { Routes, Route } from 'react-router-dom';
-import './App.css'; 
-import './LandingPage.css'; // Keep this for LandingPage styles
+import './styles/App.css';
+import './styles/pages/LandingPage.css'; // Keep this for LandingPage styles
 
 // Import Components
-import Navbar from './components/Navbar';
+import Navbar from './components/Navbar/Navbar';
 
 // Import Pages
 import LandingPage from './pages/LandingPage';

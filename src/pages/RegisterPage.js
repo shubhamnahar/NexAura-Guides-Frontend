@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import '../Auth.css'; // You will also need to create this CSS file
+import { endpoints } from '../services/api';
+import '../styles/pages/Auth.css'; // You will also need to create this CSS file
 
 const RegisterPage = () => {
   const [email, setEmail] = useState('');
@@ -28,7 +29,7 @@ const RegisterPage = () => {
 
     try {
       // 2. Send to backend API
-      const response = await fetch('http://127.0.0.1:8000/api/auth/register', {
+      const response = await fetch(endpoints.auth.register, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

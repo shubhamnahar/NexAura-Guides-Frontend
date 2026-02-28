@@ -1,9 +1,9 @@
 // src/components/Navbar.js
 import React from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { useAuth } from '../AuthContext'; // Make sure you have AuthContext.js
-import logo from '../screen-copilot-extension/icons/Logo.png'; 
-import './Navbar.css';
+import { useAuth } from '../../contexts/AuthContext'; // Make sure you have AuthContext.js
+import logo from '../../screen-copilot-extension/icons/Logo.png';
+import '../../styles/components/Navbar.css';
 
 const Navbar = () => {
   const { token, logout } = useAuth();

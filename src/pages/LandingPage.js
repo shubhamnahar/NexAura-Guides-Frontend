@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from 'react';
-import '../LandingPage.css'; 
+import '../styles/pages/LandingPage.css';
 
-function LandingPage() { 
+function LandingPage() {
   const CHROME_STORE_URL = "https://chrome.google.com/webstore/category/extensions"; // Replace with your actual store link
   const videoRef = useRef(null);
 

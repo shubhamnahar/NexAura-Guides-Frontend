@@ -1,7 +1,8 @@
 // src/pages/ExploreGuides.js
 import React, { useState, useEffect, useCallback } from 'react';
-import GuideCard from '../components/GuideCard';
-import './Page.css'; 
+import { endpoints } from '../services/api';
+import GuideCard from '../components/GuideCard/GuideCard';
+import '../styles/pages/Page.css';
 
 const ExploreGuides = () => {
   const [guides, setGuides] = useState([]);
@@ -17,7 +18,7 @@ const ExploreGuides = () => {
     
     try {
       // Pass the search term as a URL query parameter
-      const response = await fetch(`http://127.0.0.1:8000/api/guides/public?search=${searchTerm}`);
+      const response = await fetch(`${endpoints.guides.public}?search=${searchTerm}`);
 
       if (!response.ok) {
         const err = await response.json();

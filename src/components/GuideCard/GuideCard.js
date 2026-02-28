@@ -1,6 +1,6 @@
 // src/components/GuideCard.js
 import React, { useState } from 'react';
-import './GuideCard.css';
+import '../../styles/components/GuideCard.css';
 
 /**
  * Props:

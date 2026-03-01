@@ -13,6 +13,7 @@ import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import MyGuides from './pages/MyGuides';
 import ExploreGuides from './pages/ExploreGuides';
+import SharePage from './pages/SharePage';
 
 function App() {
   return (
@@ -24,6 +25,7 @@ function App() {
         <Route path="/register" element={<RegisterPage />} />
         <Route path="/my-guides" element={<MyGuides />} />
         <Route path="/explore" element={<ExploreGuides />} />
+        <Route path="/share" element={<SharePage />} />
       </Routes>
     </>
   );

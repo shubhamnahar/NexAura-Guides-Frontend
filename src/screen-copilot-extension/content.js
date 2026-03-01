@@ -1467,6 +1467,8 @@
       name: guide.name,
       shortcut: guide.shortcut,
       description: guide.description,
+      is_public: guide.is_public,
+      shared_emails: guide.shared_emails,
       steps: (guide.steps || []).map((s) => ({
         selector: s.selector || s?.target?.preferredLocators?.[0]?.value || "",
         instruction: s.instruction || "",

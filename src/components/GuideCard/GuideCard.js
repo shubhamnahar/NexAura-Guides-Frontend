@@ -68,6 +68,16 @@ const GuideCard = ({
     onEdit(guide);
   };
 
+  const renderBadge = () => {
+    if (guide.is_public) {
+      return <div className="guide-badge public">Public</div>;
+    }
+    if (guide.shared_emails && guide.shared_emails.length > 0) {
+      return <div className="guide-badge shared">Shared</div>;
+    }
+    return <div className="guide-badge private">Private</div>;
+  };
+
   const hasActions = showDelete || showDownload || (isOwner && onShare) || onEdit;
   return (
     <div
@@ -80,10 +90,7 @@ const GuideCard = ({
       }}
       style={{ cursor: hasActions ? 'default' : 'pointer' }}
     >
-      <div className="card-badges">
-        {guide.is_public && <div className="public-badge">Public</div>}
-        {!isOwner && <div className="shared-badge">Shared</div>}
-      </div>
+      {renderBadge()}
       <h3 className="guide-card-title">{guide.name}</h3>
       <p
         className="guide-card-shortcut"

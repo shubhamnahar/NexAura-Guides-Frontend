@@ -102,6 +102,15 @@ async function getActiveTabId() {
             color:white;
             cursor:pointer;
           ">Record Guide</button>
+          <button id="nextStepBtn" style="
+            flex:1;
+            padding:10px;
+            border-radius:8px;
+            border:none;
+            background:#333;
+            color:#ccc;
+            cursor:not-allowed;
+          " disabled>Next step ▶</button>
         </div>
   
         
@@ -183,33 +192,86 @@ async function getActiveTabId() {
       const safeDescription =
         desc && desc.trim() ? desc.trim() : "Guide recorded with NexAura";
 
+      const privacyChoice = await niceChoice({
+        title: "Privacy Choice",
+        message: "Make this guide public or private?",
+        options: [
+          { label: "Public", value: "public" },
+          { label: "Private", value: "private" },
+        ],
+      });
+
+      const is_public = privacyChoice === "public";
+      const shared_emails = [];
+
+      if (!is_public) {
+        let addingEmails = true;
+        while (addingEmails) {
+          const email = await nicePrompt({
+            title: "Add User (Gmail)",
+            placeholder: "user@gmail.com",
+            confirmLabel: "Add",
+            cancelLabel: "Done",
+          });
+          if (email && email.trim()) {
+            shared_emails.push(email.trim());
+            addMessage("bot", `Added ${escapeHtml(email.trim())} to shared list.`);
+          } else {
+            addingEmails = false;
+          }
+        }
+      }
+
       const guide = {
         name: name.trim(),
         shortcut: safeShortcut,
         description: safeDescription,
+        is_public,
+        shared_emails,
         steps: safeSteps,
       };
 
-      const saveRes = await sendToContent({ type: "SAVE_GUIDE", guide });
-      if (saveRes?.ok) {
-        addMessage(
-          "bot",
-          `✅ Guide saved: <strong>${escapeHtml(
-            guide.name
-          )}</strong> (shortcut: <code>${escapeHtml(guide.shortcut)}</code>)`
-        );
-        await sendToContent({ type: "CONSUME_PENDING_RECORDING" });
-      } else {
-        addMessage(
-          "bot",
-          `<strong>Error saving guide:</strong> ${escapeHtml(
-            saveRes?.error || "unknown"
-          )}`
-        );
-        addMessage(
-          "bot",
-          "You can try saving again without re-recording by using the existing steps."
-        );
+      let saving = true;
+      while (saving) {
+        const saveRes = await sendToContent({ type: "SAVE_GUIDE", guide });
+        if (saveRes?.ok) {
+          addMessage(
+            "bot",
+            `✅ Guide saved: <strong>${escapeHtml(
+              guide.name
+            )}</strong> (shortcut: <code>${escapeHtml(guide.shortcut)}</code>)`
+          );
+          await sendToContent({ type: "CONSUME_PENDING_RECORDING" });
+          saving = false;
+        } else {
+          const errorMsg = saveRes?.error || "unknown";
+          if (errorMsg.toLowerCase().includes("shortcut") || errorMsg.includes("400")) {
+            addMessage("bot", `<strong>Shortcut conflict:</strong> ${escapeHtml(errorMsg)}`);
+            const newShortcut = await nicePrompt({
+              title: "Choose a different shortcut",
+              placeholder: "/unique-shortcut",
+              defaultValue: guide.shortcut,
+            });
+            if (newShortcut) {
+              guide.shortcut = newShortcut.startsWith("/") ? newShortcut : "/" + newShortcut;
+              // Continue loop to try saving again with new shortcut
+            } else {
+              addMessage("bot", "❎ Cancelled saving guide.");
+              await sendToContent({ type: "CONSUME_PENDING_RECORDING" });
+              saving = false;
+            }
+          } else {
+            addMessage(
+              "bot",
+              `<strong>Error saving guide:</strong> ${escapeHtml(errorMsg)}`
+            );
+            addMessage(
+              "bot",
+              "You can try saving again without re-recording by using the existing steps."
+            );
+            saving = false;
+          }
+        }
       }
     }
   
@@ -373,6 +435,91 @@ async function getActiveTabId() {
           const trimmed = val && val.trim() ? val.trim() : null;
           cleanup(trimmed);
         }
+
+        function cleanup(result) {
+          overlay.remove();
+          resolve(result);
+        }
+      });
+    }
+
+    function niceChoice({
+      title = "Choose an option",
+      message = "",
+      options = [],
+    } = {}) {
+      return new Promise((resolve) => {
+        const overlay = document.createElement("div");
+        Object.assign(overlay.style, {
+          position: "fixed",
+          inset: 0,
+          background: "rgba(0,0,0,0.55)",
+          backdropFilter: "blur(8px)",
+          display: "grid",
+          placeItems: "center",
+          zIndex: 9999,
+        });
+
+        const box = document.createElement("div");
+        Object.assign(box.style, {
+          width: "min(420px, 92vw)",
+          background: "#101018",
+          border: "1px solid rgba(255,255,255,0.08)",
+          borderRadius: "16px",
+          padding: "18px 18px 14px",
+          boxShadow: "0 24px 60px rgba(0,0,0,0.45)",
+          color: "#f5f5f5",
+          fontFamily:
+            'Inter, "Segoe UI", -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif',
+        });
+
+        const h = document.createElement("div");
+        h.textContent = title;
+        Object.assign(h.style, {
+          fontSize: "16px",
+          fontWeight: "700",
+          marginBottom: "8px",
+        });
+
+        if (message) {
+          const m = document.createElement("div");
+          m.textContent = message;
+          Object.assign(m.style, {
+            fontSize: "14px",
+            marginBottom: "14px",
+            color: "#ccc",
+          });
+          box.appendChild(m);
+        }
+
+        const buttons = document.createElement("div");
+        Object.assign(buttons.style, {
+          display: "flex",
+          flexDirection: "column",
+          gap: "10px",
+        });
+
+        options.forEach((opt) => {
+          const btn = document.createElement("button");
+          btn.textContent = opt.label;
+          Object.assign(btn.style, {
+            padding: "12px",
+            borderRadius: "10px",
+            border: "1px solid #2f2f3b",
+            background: "#1b1b28",
+            color: "#fff",
+            fontWeight: "600",
+            cursor: "pointer",
+            textAlign: "left",
+          });
+          btn.onclick = () => cleanup(opt.value);
+          buttons.appendChild(btn);
+        });
+
+        box.appendChild(h);
+        box.appendChild(buttons);
+        overlay.appendChild(box);
+        document.body.appendChild(overlay);
 
         function cleanup(result) {
           overlay.remove();

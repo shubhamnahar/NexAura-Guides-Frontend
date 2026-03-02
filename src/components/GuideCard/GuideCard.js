@@ -9,6 +9,9 @@ import '../../styles/components/GuideCard.css';
  * - onDelete: function(guideId)
  * - showDownload: boolean (show download button)
  * - onDownload: function(guide)
+ * - isOwner: boolean (is current user owner of the guide)
+ * - onShare: function(guide)
+ * - onEdit: function(guide)
  */
 const GuideCard = ({
   guide,
@@ -16,6 +19,9 @@ const GuideCard = ({
   onDelete,
   showDownload = false,
   onDownload,
+  isOwner = false,
+  onShare,
+  onEdit,
 }) => {
   const [isExpanded, setIsExpanded] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -50,7 +56,19 @@ const GuideCard = ({
     onDownload(guide);
   };
 
-  const hasActions = showDelete || showDownload;
+  const handleShareClick = (e) => {
+    e.stopPropagation();
+    if (!onShare) return;
+    onShare(guide);
+  };
+
+  const handleEditClick = (e) => {
+    e.stopPropagation();
+    if (!onEdit) return;
+    onEdit(guide);
+  };
+
+  const hasActions = showDelete || showDownload || (isOwner && onShare) || onEdit;
 
   return (
     <div
@@ -63,6 +81,10 @@ const GuideCard = ({
       }}
       style={{ cursor: hasActions ? 'default' : 'pointer' }}
     >
+      <div className="card-badges">
+        {guide.is_public && <div className="public-badge">Public</div>}
+        {!isOwner && <div className="shared-badge">Shared</div>}
+      </div>
       <h3 className="guide-card-title">{guide.name}</h3>
       <p
         className="guide-card-shortcut"
@@ -100,7 +122,25 @@ const GuideCard = ({
             </button>
           )}
 
-          {showDelete && (
+          {onEdit && (
+            <button
+              className="guide-card-edit-btn"
+              onClick={handleEditClick}
+            >
+              Edit
+            </button>
+          )}
+
+          {isOwner && onShare && (
+            <button
+              className="guide-card-share-btn"
+              onClick={handleShareClick}
+            >
+              Share
+            </button>
+          )}
+
+          {showDelete && isOwner && (
             <button
               className="guide-card-delete-btn"
               aria-label={`Delete ${guide.name}`}

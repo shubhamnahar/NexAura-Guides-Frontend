@@ -3,13 +3,29 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { endpoints } from '../services/api';
 import GuideCard from '../components/GuideCard/GuideCard';
+import ShareModal from '../components/ShareModal/ShareModal';
+import EditModal from '../components/EditModal/EditModal';
 import '../styles/pages/Page.css';
 
 const MyGuides = () => {
   const [guides, setGuides] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [sharingGuide, setSharingGuide] = useState(null);
+  const [editingGuide, setEditingGuide] = useState(null);
   const { token } = useAuth();
+
+  const getCurrentUserId = (token) => {
+    if (!token) return null;
+    try {
+      const payload = JSON.parse(atob(token.split('.')[1]));
+      return payload.sub || payload.user_id;
+    } catch (e) {
+      return null;
+    }
+  };
+
+  const currentUserId = getCurrentUserId(token);
 
   useEffect(() => {
     const fetchGuides = async () => {
@@ -127,6 +143,18 @@ const MyGuides = () => {
     }
   };
 
+  const handleShareGuide = (guide) => {
+    setSharingGuide(guide);
+  };
+
+  const handleEditGuide = (guide) => {
+    setEditingGuide(guide);
+  };
+
+  const handleGuideUpdate = (updatedGuide) => {
+    setGuides(current => current.map(g => g.id === updatedGuide.id ? updatedGuide : g));
+  };
+
   return (
     <div className="page-container">
       <div className="container">
@@ -149,10 +177,31 @@ const MyGuides = () => {
               onDelete={handleDeleteGuide}
               showDownload={true}
               onDownload={handleDownloadGuide}
+              isOwner={String(guide.owner_id) === String(currentUserId)}
+              onShare={handleShareGuide}
+              onEdit={handleEditGuide}
             />
           ))}
         </div>
       </div>
+
+      {sharingGuide && (
+        <ShareModal
+          guide={sharingGuide}
+          token={token}
+          onClose={() => setSharingGuide(null)}
+          onUpdate={handleGuideUpdate}
+        />
+      )}
+
+      {editingGuide && (
+        <EditModal
+          guide={editingGuide}
+          token={token}
+          onClose={() => setEditingGuide(null)}
+          onUpdate={handleGuideUpdate}
+        />
+      )}
     </div>
   );
 };

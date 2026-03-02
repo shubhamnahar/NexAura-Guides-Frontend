@@ -747,71 +747,59 @@
     isProcessingInteraction = true;
 
     try {
-      // Freeze the page immediately so we can persist the step safely.
+      // 1. Freeze the page immediately so we can capture the interaction
       event.preventDefault();
       event.stopPropagation();
       event.stopImmediatePropagation();
 
       const actionType = event.type === "submit" ? "submit" : "click";
-      const actionable =
-        actionType === "submit" ? target.closest("form") || target : target;
-      const submitter =
-        actionType === "submit"
-          ? event.submitter ||
-            (target.matches &&
-            target.matches('button[type="submit"],input[type="submit"]')
-              ? target
-              : actionable.querySelector &&
-                actionable.querySelector('button[type="submit"],input[type="submit"]')) ||
-            null
+      const actionable = actionType === "submit" ? target.closest("form") || target : target;
+      const submitter = actionType === "submit"
+          ? event.submitter || (target.matches && target.matches('button[type="submit"],input[type="submit"]') ? target : actionable.querySelector && actionable.querySelector('button[type="submit"],input[type="submit"]')) || null
           : null;
+
+      // 2. Identify heavily restricted native pickers
+      const isNativePicker = actionable.tagName === "INPUT" && /file|date|time|color|month|week|datetime-local/i.test(actionable.type);
+
+      // 3. Pre-calculate the hint strings
+      // 3. Pre-calculate the hint strings
+      const textHint = (actionable.innerText || actionable.textContent || "").trim();
+      const defaultInstruction = textHint ? `Interact: ${textHint.slice(0, 60)}` : "Step recorded";
+      let instruction = defaultInstruction;
+
+      // 🚨 4. THE MAGIC: Skip the prompt entirely for native pickers!
+      // The prompt() dialog steals window focus, which instantly kills Chrome's date calendar.
+      // By skipping the prompt, the native calendar opens perfectly and we just use the default instruction.
+      if (isNativePicker && event.type !== "mousedown") {
+          console.log("Native picker detected. Skipping prompt to preserve browser focus.");
+          // We do absolutely nothing here. We let the browser naturally open the picker!
+      }
 
       try {
         const rect = actionable.getBoundingClientRect();
-        showLiveHighlight(
-          [
-            {
-              x: rect.left,
-              y: rect.top,
-              w: rect.width,
-              h: rect.height,
-              summary: "Recorded step",
-            },
-          ],
-          3000
-        );
+        showLiveHighlight([
+            { x: rect.left, y: rect.top, w: rect.width, h: rect.height, summary: "Recorded step" }
+        ], 3000);
       } catch (err) {
         console.warn("NexAura: highlight failed", err);
       }
 
+      // ---> THIS IS THE AWAIT THAT KILLS THE SECURITY TOKEN <---
       await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
 
-      const isInput =
-        (actionable.tagName === "INPUT" &&
-          /text|email|search|password|tel|url/i.test(actionable.type)) ||
-        actionable.tagName === "TEXTAREA";
+      const isInput = (actionable.tagName === "INPUT" && /text|email|search|password|tel|url/i.test(actionable.type)) || actionable.tagName === "TEXTAREA";
       const isContentEditable = actionable.isContentEditable;
 
       let capturedTarget = null;
       try {
-        const { captureTarget } = await loadModule(
-          "core/recording/captureTarget.js"
-        );
-        capturedTarget = captureTarget(actionable, {
-          id: currentFrameId,
-          href: window.location.href,
-        });
+        const { captureTarget } = await loadModule("core/recording/captureTarget.js");
+        capturedTarget = captureTarget(actionable, { id: currentFrameId, href: window.location.href });
         if (capturedTarget?.vision?.bbox) {
           capturedTarget.vision.bbox = scaleBboxByDpr(actionable.getBoundingClientRect());
         }
-      } catch (e) {
-        console.warn("captureTarget failed", e);
-      }
+      } catch (e) {}
 
-      const finderLocator =
-        capturedTarget?.preferredLocators?.find(
-          (l) => l?.type === "css" && l.confidence >= 0.75
-        ) || null;
+      const finderLocator = capturedTarget?.preferredLocators?.find((l) => l?.type === "css" && l.confidence >= 0.75) || null;
       const selector = finderLocator?.value || getCssSelector(actionable);
 
       let action = actionType === "submit" ? "submit" : "click";
@@ -826,33 +814,25 @@
         }
       }
 
-      const textHint = (actionable.innerText || actionable.textContent || "").trim();
-      const defaultInstruction = textHint
-        ? `Interact: ${textHint.slice(0, 60)}`
-        : "Step recorded";
-      let instruction = defaultInstruction;
-      try {
-        const prompted = prompt("Describe this step:", defaultInstruction);
-        if (prompted && prompted.trim()) {
-          instruction = prompted.trim();
-        }
-      } catch (_) {}
+      // 5. If it is NOT a native picker, we prompt here (the normal flow)
+      if (!isNativePicker) {
+          try {
+            const prompted = prompt("Describe this step:", defaultInstruction);
+            if (prompted && prompted.trim()) {
+              instruction = prompted.trim();
+            }
+          } catch (_) {}
+      }
 
       const finalTarget = capturedTarget ? { ...capturedTarget } : {};
       finalTarget.innerText = textHint;
 
       const step = {
-        selector,
-        instruction,
-        action,
-        value,
+        selector, instruction, action, value,
         tagName: actionable.tagName ? actionable.tagName.toLowerCase() : null,
-        target: finalTarget,
-        screenshot: null,
-        frameId: currentFrameId,
-        frameHref: window.location.href,
-        createdAt: Date.now(),
-        eventType: actionType,
+        target: finalTarget, screenshot: null,
+        frameId: currentFrameId, frameHref: window.location.href,
+        createdAt: Date.now(), eventType: actionType,
       };
 
       persistPendingStep(step);
@@ -863,9 +843,7 @@
           step.screenshot = screenshot;
           persistPendingStep(step);
         }
-      } catch (err) {
-        console.warn("NexAura: screenshot (fast) failed", err);
-      }
+      } catch (err) {}
 
       const sendToBackground = new Promise((resolve) => {
         chrome.runtime.sendMessage({ type: "RECORD_STEP", payload: step }, (res) => {
@@ -875,60 +853,37 @@
       });
 
       currentGuideSteps.push(step);
-
       await syncSharedState().catch(() => {});
       await sendToBackground;
 
-      // Replay the user's intended action after a short pause.
+      // 6. Replay the user's intended action after a short pause.
       setTimeout(() => {
         try {
           isProgrammaticallyClicking = true;
           if (actionType === "submit") {
             const form = actionable.closest("form") || actionable;
-            if (form && typeof form.requestSubmit === "function") {
-              form.requestSubmit(submitter || undefined);
-            } else if (form && typeof form.submit === "function") {
-              form.submit();
-            } else if (typeof actionable.submit === "function") {
-              actionable.submit();
-            } else {
-              actionable.click();
-            }
-          } else {
-            const eventInit = {
-              view: window,
-              bubbles: true,
-              cancelable: true,
-              composed: true,
-              buttons: (event && event.buttons) || 1,
-              clientX: (event && event.clientX) || 0,
-              clientY: (event && event.clientY) || 0,
-              screenX: (event && event.screenX) || 0,
-              screenY: (event && event.screenY) || 0,
-              ctrlKey: (event && event.ctrlKey) || false,
-              altKey: (event && event.altKey) || false,
-              shiftKey: (event && event.shiftKey) || false,
-              metaKey: (event && event.metaKey) || false
-            };
-
-            // 1. ALWAYS dispatch the full exact sequence to mimic human behavior!
-            // Select2 MUST have mousedown to prepare its focus state, and click to open/select.
+            if (form && typeof form.requestSubmit === "function") form.requestSubmit(submitter || undefined);
+            else if (form && typeof form.submit === "function") form.submit();
+            else if (typeof actionable.submit === "function") actionable.submit();
+            else actionable.click();
+          } 
+          // 7. PREVENT DOUBLE-OPENING THE NATIVE PICKER
+          else if (!isNativePicker) { 
+            const eventInit = { view: window, bubbles: true, cancelable: true, composed: true };
             actionable.dispatchEvent(new MouseEvent("mousedown", eventInit));
             actionable.dispatchEvent(new MouseEvent("mouseup", eventInit));
             actionable.dispatchEvent(new MouseEvent("click", eventInit));
 
-            // 2. Fallback: Force standard navigation if single-page routing fails
             const anchor = actionable.closest("a");
             if (anchor && anchor.href && !anchor.href.startsWith("javascript:") && !anchor.getAttribute('href').startsWith('#')) {
                window.location.href = anchor.href;
             }
           }
         } catch (err) {
-          console.warn("NexAura: replay failed", err);
         } finally {
           setTimeout(() => {
             isProgrammaticallyClicking = false;
-            isProcessingInteraction = false; // RELEASE THE LOCK ON SUCCESS
+            isProcessingInteraction = false; 
           }, 0);
         }
       }, REPLAY_DELAY_MS);

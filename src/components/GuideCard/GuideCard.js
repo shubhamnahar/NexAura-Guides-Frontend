@@ -69,7 +69,6 @@ const GuideCard = ({
   };
 
   const hasActions = showDelete || showDownload || (isOwner && onShare) || onEdit;
-
   return (
     <div
       className={`guide-card ${isExpanded ? 'expanded' : ''}`}

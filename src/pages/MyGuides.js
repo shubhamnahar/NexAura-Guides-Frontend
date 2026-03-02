@@ -4,6 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { endpoints } from '../services/api';
 import GuideCard from '../components/GuideCard/GuideCard';
 import ShareModal from '../components/ShareModal/ShareModal';
+import EditModal from '../components/EditModal/EditModal';
 import '../styles/pages/Page.css';
 
 const MyGuides = () => {
@@ -11,6 +12,7 @@ const MyGuides = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [sharingGuide, setSharingGuide] = useState(null);
+  const [editingGuide, setEditingGuide] = useState(null);
   const { token } = useAuth();
 
   const getCurrentUserId = (token) => {
@@ -145,6 +147,10 @@ const MyGuides = () => {
     setSharingGuide(guide);
   };
 
+  const handleEditGuide = (guide) => {
+    setEditingGuide(guide);
+  };
+
   const handleGuideUpdate = (updatedGuide) => {
     setGuides(current => current.map(g => g.id === updatedGuide.id ? updatedGuide : g));
   };
@@ -173,6 +179,7 @@ const MyGuides = () => {
               onDownload={handleDownloadGuide}
               isOwner={String(guide.owner_id) === String(currentUserId)}
               onShare={handleShareGuide}
+              onEdit={handleEditGuide}
             />
           ))}
         </div>
@@ -183,6 +190,15 @@ const MyGuides = () => {
           guide={sharingGuide}
           token={token}
           onClose={() => setSharingGuide(null)}
+          onUpdate={handleGuideUpdate}
+        />
+      )}
+
+      {editingGuide && (
+        <EditModal
+          guide={editingGuide}
+          token={token}
+          onClose={() => setEditingGuide(null)}
           onUpdate={handleGuideUpdate}
         />
       )}

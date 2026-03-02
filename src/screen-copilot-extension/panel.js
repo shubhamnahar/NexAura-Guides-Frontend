@@ -102,6 +102,15 @@ async function getActiveTabId() {
             color:white;
             cursor:pointer;
           ">Record Guide</button>
+          <button id="nextStepBtn" style="
+            flex:1;
+            padding:10px;
+            border-radius:8px;
+            border:none;
+            background:#333;
+            color:#ccc;
+            cursor:not-allowed;
+          " disabled>Next step ▶</button>
         </div>
   
         

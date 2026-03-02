@@ -11,6 +11,7 @@ import '../../styles/components/GuideCard.css';
  * - onDownload: function(guide)
  * - isOwner: boolean (is current user owner of the guide)
  * - onShare: function(guide)
+ * - onEdit: function(guide)
  */
 const GuideCard = ({
   guide,
@@ -20,6 +21,7 @@ const GuideCard = ({
   onDownload,
   isOwner = false,
   onShare,
+  onEdit,
 }) => {
   const [isExpanded, setIsExpanded] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -60,7 +62,11 @@ const GuideCard = ({
     onShare(guide);
   };
 
-  const hasActions = showDelete || showDownload || (isOwner && onShare);
+  const handleEditClick = (e) => {
+    e.stopPropagation();
+    if (!onEdit) return;
+    onEdit(guide);
+  };
 
   const renderBadge = () => {
     if (guide.is_public) {
@@ -72,6 +78,7 @@ const GuideCard = ({
     return <div className="guide-badge private">Private</div>;
   };
 
+  const hasActions = showDelete || showDownload || (isOwner && onShare) || onEdit;
   return (
     <div
       className={`guide-card ${isExpanded ? 'expanded' : ''}`}
@@ -118,6 +125,15 @@ const GuideCard = ({
               onClick={handleDownloadClick}
             >
               Download PDF
+            </button>
+          )}
+
+          {onEdit && (
+            <button
+              className="guide-card-edit-btn"
+              onClick={handleEditClick}
+            >
+              Edit
             </button>
           )}
 

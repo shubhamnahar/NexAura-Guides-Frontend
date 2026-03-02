@@ -171,7 +171,7 @@ const MyGuides = () => {
               onDelete={handleDeleteGuide}
               showDownload={true}
               onDownload={handleDownloadGuide}
-              isOwner={guide.owner_id === currentUserId}
+              isOwner={String(guide.owner_id) === String(currentUserId)}
               onShare={handleShareGuide}
             />
           ))}

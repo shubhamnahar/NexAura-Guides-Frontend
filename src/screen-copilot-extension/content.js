@@ -1357,7 +1357,7 @@
     const userId = getUserIdFromToken(token);
     let scopedGuides = guides;
     if (userId) {
-      const filtered = guides.filter((g) => g.owner_id === userId);
+      const filtered = guides.filter((g) => String(g.owner_id) === String(userId));
       scopedGuides = filtered.length ? filtered : guides;
     }
     return scopedGuides.map((g) => hydrateGuideScreenshots(g, cache));

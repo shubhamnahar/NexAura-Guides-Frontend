@@ -11,6 +11,7 @@ import '../../styles/components/GuideCard.css';
  * - onDownload: function(guide)
  * - isOwner: boolean (is current user owner of the guide)
  * - onShare: function(guide)
+ * - onEdit: function(guide)
  */
 const GuideCard = ({
   guide,
@@ -20,6 +21,7 @@ const GuideCard = ({
   onDownload,
   isOwner = false,
   onShare,
+  onEdit,
 }) => {
   const [isExpanded, setIsExpanded] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -60,8 +62,13 @@ const GuideCard = ({
     onShare(guide);
   };
 
-  const hasActions = showDelete || showDownload || (isOwner && onShare);
+  const handleEditClick = (e) => {
+    e.stopPropagation();
+    if (!onEdit) return;
+    onEdit(guide);
+  };
 
+  const hasActions = showDelete || showDownload || (isOwner && onShare) || onEdit;
   return (
     <div
       className={`guide-card ${isExpanded ? 'expanded' : ''}`}
@@ -73,7 +80,10 @@ const GuideCard = ({
       }}
       style={{ cursor: hasActions ? 'default' : 'pointer' }}
     >
-      {!isOwner && <div className="shared-badge">Shared</div>}
+      <div className="card-badges">
+        {guide.is_public && <div className="public-badge">Public</div>}
+        {!isOwner && <div className="shared-badge">Shared</div>}
+      </div>
       <h3 className="guide-card-title">{guide.name}</h3>
       <p
         className="guide-card-shortcut"
@@ -108,6 +118,15 @@ const GuideCard = ({
               onClick={handleDownloadClick}
             >
               Download PDF
+            </button>
+          )}
+
+          {onEdit && (
+            <button
+              className="guide-card-edit-btn"
+              onClick={handleEditClick}
+            >
+              Edit
             </button>
           )}
 

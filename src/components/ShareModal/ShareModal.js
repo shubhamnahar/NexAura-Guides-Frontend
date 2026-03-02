@@ -14,7 +14,11 @@ const ShareModal = ({ guide, token, onClose, onUpdate }) => {
   useEffect(() => {
     setEmails(guide.shared_emails || []);
     setIsPublic(guide.is_public || false);
-    setShareLink('');
+    if (guide.share_token) {
+      setShareLink(`${window.location.origin}/share?token=${guide.share_token}`);
+    } else {
+      setShareLink('');
+    }
     setError('');
   }, [guide]);
 
@@ -100,6 +104,7 @@ const ShareModal = ({ guide, token, onClose, onUpdate }) => {
       const data = await response.json();
       const link = `${window.location.origin}/share?token=${data.token}`;
       setShareLink(link);
+      onUpdate && onUpdate({ ...guide, share_token: data.token });
     } catch (err) {
       setError(err.message);
     } finally {
@@ -138,30 +143,33 @@ const ShareModal = ({ guide, token, onClose, onUpdate }) => {
           </label>
         </div>
 
-        {!isPublic && (
-          <div className="share-section">
-            <h3>Shared with</h3>
-            <form onSubmit={handleAddEmail} className="email-form">
-              <input
-                type="email"
-                placeholder="Enter Gmail address..."
-                value={newEmail}
-                onChange={e => setNewEmail(e.target.value)}
-                required
-              />
-              <button type="submit">Add</button>
-            </form>
-            <ul className="email-list">
-              {emails.length === 0 && <li>No users added yet.</li>}
-              {emails.map(email => (
-                <li key={email}>
-                  {email}
-                  <button onClick={() => handleRemoveEmail(email)}>&times;</button>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
+        <div className="share-section">
+          <h3>Shared with</h3>
+          <form onSubmit={handleAddEmail} className="email-form">
+            <input
+              type="email"
+              placeholder="Enter Gmail address..."
+              value={newEmail}
+              onChange={e => setNewEmail(e.target.value)}
+              required
+            />
+            <button type="submit">Add Member</button>
+          </form>
+          <ul className="email-list">
+            {emails.length === 0 && <li className="empty-list">No members added yet.</li>}
+            {emails.map(email => (
+              <li key={email}>
+                <span className="email-text">{email}</span>
+                <button
+                  className="revoke-btn"
+                  onClick={() => handleRemoveEmail(email)}
+                >
+                  Revoke Access
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
 
         <div className="share-section">
           <h3>Share Link</h3>
@@ -176,8 +184,13 @@ const ShareModal = ({ guide, token, onClose, onUpdate }) => {
           ) : (
             <div className="link-container">
               <input type="text" value={shareLink} readOnly />
-              <button onClick={copyToClipboard}>
-                {copied ? 'Copied!' : 'Copy'}
+              <button className="copy-btn" onClick={copyToClipboard}>
+                {copied ? 'Copied!' : (
+                  <svg className="copy-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                  </svg>
+                )}
               </button>
             </div>
           )}
